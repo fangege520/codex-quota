@@ -207,18 +207,16 @@ function setSystemBar(enabled) {
 async function savePreviews() {
   const dir = path.join(app.getPath('userData'), 'previews');
   fs.mkdirSync(dir, { recursive: true });
-  const metadata = { checkedAt: Date.now(), bars: [] };
-  let index = 0;
-  for (const item of barWindows.values()) {
-    metadata.bars.push({ bounds: item.win.getBounds(), visible: item.win.isVisible(), lane: item.lane, protected: item.protected });
-    fs.writeFileSync(path.join(dir, `taskbar-${index++}.png`), (await item.win.webContents.capturePage()).toPNG());
-  }
-  const wasPopover = popover, previousBounds = win.getBounds();
-  popover = true; win.setBounds({ ...previousBounds, width: PANEL_WIDTH, height: PANEL_HEIGHT }); publish();
-  await new Promise(resolve => setTimeout(resolve, 150));
-  try { fs.writeFileSync(path.join(dir, 'panel.png'), (await win.webContents.capturePage()).toPNG()); }
-  finally { popover = wasPopover; win.setBounds(previousBounds); publish(); }
+  const items = [...barWindows.values()];
+  const metadata = { checkedAt: Date.now(), panelVisible: win.isVisible(), bars: items.map(item => ({ bounds: item.win.getBounds(), visible: item.win.isVisible(), lane: item.lane, protected: item.protected })) };
+  // Write geometry first. A hidden compositor surface may not deliver a frame;
+  // diagnostics must neither expose nor resize a hidden user window.
   fs.writeFileSync(path.join(dir, 'metadata.json'), JSON.stringify(metadata));
+  let index = 0;
+  for (const item of items) {
+    if (item.win.isVisible()) fs.writeFileSync(path.join(dir, `taskbar-${index++}.png`), (await item.win.webContents.capturePage()).toPNG());
+  }
+  if (win.isVisible()) fs.writeFileSync(path.join(dir, 'panel.png'), (await win.webContents.capturePage()).toPNG());
 }
 
 async function refresh() {
