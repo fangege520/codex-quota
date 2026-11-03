@@ -10,7 +10,14 @@ const { runtimeFile } = require('../lib/desktop-app.cjs');
 async function main() {
   const action = process.argv[2] || 'start';
   if (action === 'composer-status') {
-    try { console.log(fs.readFileSync(runtimeFile(), 'utf8')); }
+    try {
+      const status = JSON.parse(fs.readFileSync(runtimeFile(), 'utf8'));
+      // A killed companion cannot remove its status file. Never report that
+      // stale connection as a live widget.
+      if (!Number.isInteger(status.pid) || status.composer?.phase !== 'disabled' && Date.now() - status.updatedAt > 15000) throw new Error('STALE_STATUS');
+      process.kill(status.pid, 0);
+      console.log(JSON.stringify({ ...status, running: true }));
+    }
     catch { console.log(JSON.stringify({ running: false, composer: { phase: 'unknown' } })); }
     return;
   }

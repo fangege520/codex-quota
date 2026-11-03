@@ -40,6 +40,15 @@ async function launchDesktop({ executable, port = DEFAULT_PORT } = {}) {
   if (isDesktopRunning()) throw new Error('CODEX_RESTART_REQUIRED');
   const file = discoverDesktopApp(executable);
   const flags = ['--remote-debugging-address=127.0.0.1', `--remote-debugging-port=${port}`];
+  if (process.platform === 'win32' && /[\\/]WindowsApps[\\/]/i.test(file)) {
+    const script = path.join(__dirname, 'activate-windows-app.ps1').replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2');
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Executable', file, '-Port', String(port)], { encoding: 'utf8', windowsHide: true, timeout: 20000 });
+    if (result.status !== 0) throw new Error(`DESKTOP_ACTIVATION_FAILED: ${(result.stderr || result.error?.message || '').trim().slice(0, 400)}`);
+    let activation;
+    try { activation = JSON.parse(result.stdout.trim()); } catch { throw new Error('DESKTOP_ACTIVATION_FAILED'); }
+    if (!activation.ok || !Number.isInteger(activation.pid)) throw new Error('DESKTOP_ACTIVATION_FAILED');
+    return { port, executable: file, pid: activation.pid };
+  }
   const mac = process.platform === 'darwin';
   const child = spawn(mac ? '/usr/bin/open' : file, mac ? ['-a', file, '--args', ...flags] : flags, { detached: true, windowsHide: true, stdio: 'ignore' });
   await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', () => reject(new Error('DESKTOP_LAUNCH_FAILED'))); });
