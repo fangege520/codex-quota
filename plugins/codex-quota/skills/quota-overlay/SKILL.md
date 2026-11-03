@@ -5,6 +5,8 @@ description: Install or manage the Codex Quota desktop overlay and experimental 
 
 Manage the local Codex Quota overlay. It is a community plugin, not an OpenAI-built product. The plugin directory is two levels above this file's directory and contains `package.json`, `desktop/`, and `scripts/`.
 
+Before upgrading/reinstalling this plugin, stop the existing companion and wait for it to exit. On Windows its Electron executable locks the plugin cache; replacing that cache while it runs can fail. If an interrupted cache upgrade removed the old management script's dependencies, a source checkout with dependencies can run `node scripts/manage.cjs stop` to signal the same single-instance app. Stopping the companion does not stop Codex tasks.
+
 ## Install or launch
 
 1. Resolve the absolute plugin directory from this skill's location. Use an available Node.js 22.12+ runtime and npm. Prefer an already installed modern runtime; if the PATH runtime is too old, check the Codex bundled workspace dependency runtime before proposing a system installation.

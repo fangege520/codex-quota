@@ -31,9 +31,10 @@ async function main() {
     inspector = new CdpConnection(target.webSocketDebuggerUrl, port); await inspector.open();
     const evaluate = async expression => {
       const result = await inspector.call('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
-      if (result.exceptionDetails) throw new Error('Fixture evaluation failed');
+      if (result.exceptionDetails) throw new Error('Fixture evaluation failed: ' + (result.exceptionDetails.exception?.description || result.exceptionDetails.text).slice(0, 800));
       return result.result?.value;
     };
+    await until(async () => (await evaluate("document.readyState === 'complete' && !!document.querySelector('#prompt')")) === true, 'fixture DOM readiness');
     const original = await evaluate("document.querySelector('#prompt').textContent");
     bridge = new ComposerBridge({ port, targetFilter: t => t.type === 'page' && t.url.includes('codex-quota-fixture.html') });
     const state = { demo: true, settings: { language: 'zh' }, quota: { fetchedAt: Date.now(), short: { remaining: 86, resetsAt: Date.now() + 12000000 }, weekly: { remaining: 26, resetsAt: Date.now() + 170000000 } } };

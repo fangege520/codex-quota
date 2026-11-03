@@ -30,4 +30,10 @@ jobs:
         if: always()
         with:
           name: desktop-check-${{ matrix.os }}
-          path: plugins/codex-quota/test-results/
+          path: |
+            plugins/codex-quota/test-results/*.png
+            plugins/codex-quota/test-results/result.json
+            plugins/codex-quota/test-results/failure.txt
+            plugins/codex-quota/test-results/composer/*.png
+            plugins/codex-quota/test-results/composer/result.json
+            plugins/codex-quota/test-results/composer/failure.txt
