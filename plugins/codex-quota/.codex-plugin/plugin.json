@@ -1,6 +1,6 @@
 {
   "name": "codex-quota",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Codex quota desktop overlay for macOS and Windows.",
   "skills": "./skills/",
   "interface": {
@@ -11,5 +11,9 @@
     "composerIcon": "./assets/icon.png",
     "logo": "./assets/icon.png"
   },
-  "extensions": { "com.openai": { "onboardingSkill": "./skills/quota-overlay/SKILL.md" } }
+  "extensions": {
+    "com.openai": {
+      "onboardingSkill": "./skills/quota-overlay/SKILL.md"
+    }
+  }
 }

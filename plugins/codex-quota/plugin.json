@@ -1,11 +1,17 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "codex-quota",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "repository": "https://github.com/fangege520/codex-quota",
   "description": "Keep Codex quota visible in a draggable desktop overlay on macOS and Windows.",
   "license": "MIT",
-  "keywords": ["codex", "quota", "desktop", "macos", "windows"],
+  "keywords": [
+    "codex",
+    "quota",
+    "desktop",
+    "macos",
+    "windows"
+  ],
   "extensions": {
     "com.openai": {
       "onboardingSkill": "./skills/quota-overlay/SKILL.md",
@@ -18,7 +24,11 @@
         "brandColor": "#A9E9AD",
         "composerIcon": "./assets/icon.png",
         "logo": "./assets/icon.png",
-        "defaultPrompt": ["安装并启动 Codex 额度悬浮窗", "启用输入框额度条实验模式", "隐藏、显示或退出额度悬浮窗"]
+        "defaultPrompt": [
+          "安装并启动 Codex 额度悬浮窗",
+          "启用输入框额度条实验模式",
+          "隐藏、显示或退出额度悬浮窗"
+        ]
       }
     }
   }

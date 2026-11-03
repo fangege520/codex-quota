@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const { discoverCodex, CodexClient } = require('../lib/codex.cjs');
 const { normalizeQuota } = require('../lib/quota.cjs');
 const fs = require('node:fs');
@@ -31,13 +31,17 @@ async function main() {
     return;
   }
   if (!['start', 'show', 'hide', 'toggle', 'stop', 'composer-on', 'composer-off', 'launch-codex'].includes(action)) throw new Error('Usage: node scripts/manage.cjs start|show|hide|toggle|stop|check|composer-on|composer-off|composer-status|launch-codex');
-  let electron;
-  try { electron = require('electron'); }
-  catch { throw new Error('Dependencies missing. Run npm ci in the plugin directory first (Node.js 22+).'); }
+  const runtime = require('../lib/runtime.cjs').prepareRuntime(path.resolve(__dirname, '..'));
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
   const flags = { start: [], show: [], hide: ['--hide'], toggle: ['--toggle'], stop: ['--quit'], 'composer-on': ['--composer-on'], 'composer-off': ['--composer-off'], 'launch-codex': ['--launch-codex'] }[action];
-  const child = spawn(electron, [path.resolve(__dirname, '..'), ...flags], {
+  if (process.platform === 'win32') {
+    const launch = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(runtime.app, 'lib', 'start-windows-runtime.ps1'), '-Executable', runtime.electron, '-Runtime', runtime.app, '-Action', action], { encoding: 'utf8', windowsHide: true, timeout: 20000, env });
+    if (launch.status !== 0) throw new Error(`COMPANION_LAUNCH_FAILED: ${(launch.stderr || launch.error?.message || '').trim().slice(0, 400)}`);
+    console.log(`Overlay ${action} requested. Restore with Ctrl/Command+Shift+Q or the tray menu.`);
+    return;
+  }
+  const child = spawn(runtime.electron, [runtime.app, ...flags], {
     detached: true, windowsHide: true, stdio: 'ignore', env
   });
   await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });

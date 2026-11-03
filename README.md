@@ -17,6 +17,8 @@
 
 Windows 商店版使用系统应用激活接口传入启动参数，避免直接运行 `WindowsApps` 中的程序时出现“拒绝访问”。普通启动图标不会自动打开调试端口；正常重启后需要再次通过额度助手启动输入框模式。
 
+首次启动会把程序和 Electron 复制到本机 `codex-quota/runtime/<版本>` 持久目录，避免 Codex 启动时重建插件缓存而丢失运行依赖。该目录与设置一样位于 Windows `%APPDATA%` 或 macOS `~/Library/Application Support`。
+
 也可以在插件安装目录执行：
 
 ```sh
