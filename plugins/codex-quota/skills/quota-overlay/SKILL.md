@@ -1,6 +1,6 @@
 ---
 name: quota-overlay
-description: Install or manage the Codex Quota desktop overlay and experimental in-composer quota strip on macOS and Windows. Use for this plugin's quota widget; not general billing questions.
+description: Install or manage Codex Quota in the Windows taskbar, macOS menu bar, desktop overlay and experimental composer strip. Use for this plugin's quota widget; not general billing questions.
 ---
 
 Manage the local Codex Quota overlay. It is a community plugin, not an OpenAI-built product. The plugin directory is two levels above this file's directory and contains `package.json`, `desktop/`, and `scripts/`.
@@ -17,6 +17,10 @@ Before upgrading/reinstalling this plugin, stop the existing companion and wait 
 ## Controls
 
 Use `node scripts/manage.cjs show|hide|toggle|stop` for the requested action. Closing or hiding the widget keeps it in the Windows tray or macOS menu bar. `stop` quits it. The native menu controls pinning, collapse, opacity, polling interval, language, CLI path and position. Launch at login is available in packaged builds; the source launcher leaves startup settings unchanged.
+
+The system bar is enabled by default. Windows shows remaining quotas in a separate window positioned in an unoccupied horizontal taskbar area; macOS shows both quotas in the menu bar title. Use `system-bar-on|system-bar-off` to change this. Left-click opens the redesigned detail panel; right-click opens settings. Windows also supports hover details. Appearance supports system, light and dark. No safe taskbar space, hidden taskbars, fullscreen windows or unavailable system metadata hides the Windows strip rather than covering native icons; the tray remains available.
+
+`composer-status` includes a `systemBar` section with enabled/visible/reason. For local visual diagnosis, `snapshot` saves only the companion's own panel and taskbar PNGs plus bounds metadata in the `codex-quota/previews` application-data directory; it does not capture other apps. Do not commit real account screenshots to a public repository. Use demo smoke-test images for documentation. A real Mac desktop must be checked before claiming native menu bar layout verified; CI validates the API title and fixture panel only.
 
 ## Troubleshoot
 

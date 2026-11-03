@@ -11,7 +11,7 @@
 <body>
   <main id="panel">
     <header class="drag">
-      <div class="brand"><span class="mark">↗</span><span>CODEX <b>QUOTA</b></span></div>
+      <div class="brand"><span class="mark">◔</span><div><span>Codex Quota</span><small id="remaining-title">剩余额度</small></div></div>
       <div class="controls no-drag">
         <button id="menu" title="设置 / Settings" aria-label="Settings">···</button>
         <button id="collapse" title="折叠 / Compact" aria-label="Compact">⌃</button>
@@ -19,18 +19,16 @@
       </div>
     </header>
     <div id="expanded">
-      <div class="intro"><span id="remaining-title">剩余额度</span><span class="plan" id="plan">CODEX</span></div>
+      <div class="intro"><span class="plan" id="plan">CODEX</span><span class="intro-hint" id="window-hint">额度窗口</span></div>
       <section class="quota-row">
-        <div class="row"><span id="short-title">5 小时</span><span class="percent" id="short-percent">—</span></div>
-        <progress id="short-bar" max="100" value="0" aria-label="5 hour remaining quota"></progress>
-        <div class="reset" id="short-reset">读取中…</div>
+        <div class="ring" id="short-ring"><span>5h</span></div>
+        <div class="quota-detail"><div class="row"><span id="short-title">5 小时</span><span class="percent" id="short-percent">—</span></div><div class="reset" id="short-reset">读取中…</div><progress id="short-bar" max="100" value="0" aria-label="5 hour remaining quota"></progress></div>
       </section>
-      <section class="quota-row">
-        <div class="row"><span id="weekly-title">7 天</span><span class="percent" id="weekly-percent">—</span></div>
-        <progress id="weekly-bar" max="100" value="0" aria-label="Weekly remaining quota"></progress>
-        <div class="reset" id="weekly-reset">读取中…</div>
+      <section class="quota-row weekly">
+        <div class="ring" id="weekly-ring"><span>7d</span></div>
+        <div class="quota-detail"><div class="row"><span id="weekly-title">7 天</span><span class="percent" id="weekly-percent">—</span></div><div class="reset" id="weekly-reset">读取中…</div><progress id="weekly-bar" max="100" value="0" aria-label="Weekly remaining quota"></progress></div>
       </section>
-      <footer><span id="status-dot"></span><span id="status-text">正在连接</span><button id="refresh" class="no-drag" title="立即刷新 / Refresh" aria-label="Refresh">↻</button></footer>
+      <footer><span id="status-dot"></span><span id="status-text">正在连接</span><span class="live-tag" id="live-tag">LIVE</span><button id="refresh" class="no-drag" title="立即刷新 / Refresh" aria-label="Refresh">↻</button></footer>
     </div>
     <div id="compact" class="drag">
       <span class="mini-mark">↗</span>

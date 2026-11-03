@@ -1,11 +1,23 @@
 # Codex Quota · 额度悬浮窗
 
-把 Codex 的 **5 小时 / 每周剩余额度**放到屏幕角落。可拖动、置顶、折叠与隐藏，支持 Windows 和 macOS。
+把 Codex 的 **5 小时 / 每周剩余额度**放到 Windows 任务栏、macOS 菜单栏，或屏幕角落。可拖动、置顶、折叠与隐藏。
 
 这是社区开发的个人插件，使用 Codex 支持的插件格式分发。它包含安装/管理 skill 和一个 Electron 桌面程序，不代表 OpenAI 官方出品。插件安装后运行本地悬浮窗，不修改 Codex 客户端。
 
 ![展开模式（演示数据）](docs/expanded.png)
 ![折叠模式（演示数据）](docs/compact.png)
+
+## 0.3 系统栏与新版面板
+
+- **Windows**：在水平任务栏的空闲位置显示两个额度圆环和百分比，跟随屏幕缩放、多屏任务栏和图标位置变化。悬停显示详情，点击固定打开，再点击或点击其他窗口收起；右键打开设置。
+- **macOS**：顶部菜单栏直接显示 `5h 64%  7d 28%`，点击打开详情，右键打开设置。
+- **新版面板**：圆环卡片、大百分比、重置时间与同步状态；可选跟随系统、浅色或深色外观。刷新失败时明确标记缓存数据。
+- 原有桌面浮窗和输入框额度条可继续单独开启。系统栏默认开启；在右键菜单关闭，或运行 `node scripts/manage.cjs system-bar-off`。`show` 显示可拖动浮窗，`hide` 只隐藏详情浮窗。
+
+![系统栏组件（演示数据）](docs/taskbar.png)
+![深色面板（演示数据）](docs/dark.png)
+
+Windows 使用独立窗口覆盖任务栏空位，不注入或修改 Explorer。无安全空位、自动隐藏任务栏收起、全屏应用或无法读取占用范围时隐藏组件，仍可从托盘打开详情。标准 Windows 11 水平任务栏已在开发机验证；竖直、第三方任务栏不支持。macOS 的自动检查覆盖菜单栏文字与弹出面板，具体菜单栏布局仍需 Mac 实机确认。
 
 ## 0.2 实验功能：输入框内额度条
 
@@ -127,3 +139,5 @@ GitHub Actions 在 Windows、Mac Apple Silicon、Mac Intel 上运行测试与窗
 - [插件目录与个人插件](https://learn.chatgpt.com/docs/plugins)
 
 MIT License.
+
+任务栏空位定位思路参考 [SaturdayF/codex-quota-bar](https://github.com/SaturdayF/codex-quota-bar)。本项目保留独立的 Electron 实现、数据读取与跨平台插件安装流程。

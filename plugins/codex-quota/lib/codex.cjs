@@ -79,7 +79,7 @@ class CodexClient {
     };
     child.on('error', failed); child.on('exit', failed);
     try {
-      await this.rpc('initialize', { clientInfo: { name: 'codex_quota_overlay', title: 'Codex Quota', version: '0.2.2' } });
+      await this.rpc('initialize', { clientInfo: { name: 'codex_quota_overlay', title: 'Codex Quota', version: '0.3.0' } });
       this.send({ method: 'initialized' });
     } catch (error) { this.close(); throw error; }
   }

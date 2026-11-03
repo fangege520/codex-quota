@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, globalShortcut, screen, dialog, powerMonitor } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, globalShortcut, screen, dialog, powerMonitor, nativeTheme } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -8,6 +8,8 @@ const { CodexClient, discoverCodex } = require('../lib/codex.cjs');
 const { normalizeQuota, clampBounds } = require('../lib/quota.cjs');
 const { ComposerBridge, DEFAULT_PORT, validPort } = require('../lib/composer.cjs');
 const { discoverDesktopApp, launchDesktop } = require('../lib/desktop-app.cjs');
+const { findFreeBounds, popoverBounds, TaskbarWatcher } = require('../lib/system-bar.cjs');
+const PANEL_WIDTH = 380, PANEL_HEIGHT = 324;
 
 const smoke = process.argv.includes('--smoke-test');
 if (smoke && !process.env.CODEX_QUOTA_TEST_DIR) throw new Error('Smoke test needs an isolated output directory');
@@ -26,12 +28,19 @@ const settings = {
   codexPath: typeof saved.codexPath === 'string' ? saved.codexPath : '',
   composerEnabled: saved.composerEnabled === true,
   composerPort: validPort(saved.composerPort) ? saved.composerPort : DEFAULT_PORT,
-  desktopAppPath: typeof saved.desktopAppPath === 'string' ? saved.desktopAppPath : ''
+  desktopAppPath: typeof saved.desktopAppPath === 'string' ? saved.desktopAppPath : '',
+  systemBarEnabled: saved.systemBarEnabled !== false,
+  theme: ['system', 'light', 'dark'].includes(saved.theme) ? saved.theme : 'system'
 };
+nativeTheme.themeSource = settings.theme;
+if (process.argv.includes('--system-bar-on')) settings.systemBarEnabled = true;
+if (process.argv.includes('--system-bar-off')) settings.systemBarEnabled = false;
 if (process.argv.includes('--composer-on') || process.argv.includes('--launch-codex')) settings.composerEnabled = true;
 if (process.argv.includes('--composer-off')) settings.composerEnabled = false;
 let win, tray, client, timer, saveTimer, quitting = false, refreshing = false, failures = 0;
 let bridge, cleanupComplete = false, cleanupInFlight = false;
+let taskbarWatcher, popover = false, hoverOnly = false, popupCloseTimer;
+const barWindows = new Map();
 const state = { quota: null, error: null, loading: true, settings, demo: smoke };
 const choose = (zh, en) => settings.language === 'zh' ? zh : en;
 
@@ -41,14 +50,16 @@ function persist() {
   fs.writeFileSync(temp, JSON.stringify(settings, null, 2));
   fs.renameSync(temp, settingsFile);
 }
-function snapshot() { return JSON.parse(JSON.stringify(state)); }
+function snapshot() { const result = JSON.parse(JSON.stringify(state)); if (popover) result.settings.collapsed = false; return result; }
 function publish() {
+  state.systemDark = settings.theme === 'dark' || settings.theme === 'system' && (nativeTheme.shouldUseDarkColorsForSystemIntegratedUI ?? nativeTheme.shouldUseDarkColors);
   bridge?.update(state);
   if (win && !win.isDestroyed()) win.webContents.send('quota:changed', snapshot());
+  for (const item of barWindows.values()) if (!item.win.isDestroyed()) item.win.webContents.send('quota:changed', snapshot());
   if (!smoke) {
     try {
       fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
-      fs.writeFileSync(path.join(path.dirname(settingsFile), 'runtime-status.json'), JSON.stringify({ pid: process.pid, windowVisible: !!win?.isVisible(), composer: state.composer || { phase: 'disabled' }, updatedAt: Date.now() }));
+      fs.writeFileSync(path.join(path.dirname(settingsFile), 'runtime-status.json'), JSON.stringify({ pid: process.pid, windowVisible: !!win?.isVisible(), systemBar: { enabled: settings.systemBarEnabled, visible: process.platform === 'darwin' ? !!tray && settings.systemBarEnabled : [...barWindows.values()].filter(item => item.win.isVisible()).length, reason: state.systemBarReason || null }, composer: state.composer || { phase: 'disabled' }, updatedAt: Date.now() }));
     } catch {}
   }
   updateTray();
@@ -88,7 +99,7 @@ async function launchCodex() {
 function position() {
   const primary = screen.getPrimaryDisplay();
   const displays = [primary, ...screen.getAllDisplays().filter(d => d.id !== primary.id)].map(d => d.workArea);
-  return clampBounds(settings.position, displays, 336, settings.collapsed ? 78 : 254);
+  return clampBounds(settings.position, displays, settings.collapsed ? 336 : PANEL_WIDTH, settings.collapsed ? 78 : PANEL_HEIGHT);
 }
 function fitWindow() {
   const [x, y] = win.getPosition();
@@ -96,12 +107,98 @@ function fitWindow() {
   win.setBounds(position());
 }
 function collapse() {
+  popover = false; hoverOnly = false;
   settings.collapsed = !settings.collapsed;
   fitWindow(); persist(); publish();
 }
-function show() { win.show(); if (process.platform === 'darwin') app.dock?.hide(); }
-function toggle() { win.isVisible() ? win.hide() : show(); }
+function show() { popover = false; hoverOnly = false; clearTimeout(popupCloseTimer); win.setBounds(position()); win.setAlwaysOnTop(settings.topmost, 'floating'); win.setOpacity(settings.opacity); publish(); win.show(); if (process.platform === 'darwin') app.dock?.hide(); }
+function hide() { clearTimeout(popupCloseTimer); win.hide(); popover = false; hoverOnly = false; }
+function toggle() { win.isVisible() ? hide() : show(); }
 function quit() { quitting = true; app.quit(); }
+function openPopover(anchor, preview = false) {
+  if (preview && win.isVisible() && !popover) return;
+  clearTimeout(popupCloseTimer); popover = true; hoverOnly = preview;
+  const area = screen.getDisplayMatching(anchor).workArea;
+  win.setBounds(popoverBounds(anchor, area, PANEL_WIDTH, PANEL_HEIGHT));
+  win.setAlwaysOnTop(true, 'pop-up-menu'); win.setOpacity(1); publish();
+  if (preview) win.showInactive(); else { win.show(); win.focus(); }
+}
+function togglePopover(anchor) { if (win.isVisible() && popover && !hoverOnly) hide(); else openPopover(anchor); }
+function closePreviewLater() {
+  clearTimeout(popupCloseTimer);
+  popupCloseTimer = setTimeout(() => {
+    if (!popover || !hoverOnly) return;
+    const p = screen.getCursorScreenPoint();
+    const contains = r => p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + r.height;
+    if (contains(win.getBounds()) || [...barWindows.values()].some(item => item.win.isVisible() && contains(item.win.getBounds()))) closePreviewLater();
+    else hide();
+  }, 550);
+}
+function secureContents(window) {
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.webContents.on('will-navigate', event => event.preventDefault());
+}
+async function updateTaskbars(data) {
+  if (!settings.systemBarEnabled || quitting) return;
+  const active = new Set();
+  for (const bar of data.bars) {
+    active.add(bar.handle);
+    let item = barWindows.get(bar.handle);
+    const rect = screen.screenToDipRect(null, bar.bounds);
+    const occupied = bar.occupied.map(r => screen.screenToDipRect(null, r));
+    const area = screen.getDisplayMatching(rect).bounds;
+    const fg = screen.screenToDipRect(null, data.foreground);
+    const fullscreen = fg.width >= area.width && fg.height >= area.height && fg.x <= area.x && fg.y <= area.y;
+    const onScreen = rect.x >= area.x - 2 && rect.y >= area.y - 2 && rect.x + rect.width <= area.x + area.width + 2 && rect.y + rect.height <= area.y + area.height + 2;
+    const bounds = bar.visible && bar.accurate && onScreen && !fullscreen && findFreeBounds(rect, occupied, 178, 36, item?.preferred);
+    if (!bounds) { item?.win.hide(); continue; }
+    if (!item) {
+      const window = new BrowserWindow({ ...bounds, frame: false, transparent: true, resizable: false, show: false, skipTaskbar: true, focusable: false, hasShadow: false, alwaysOnTop: true, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+      secureContents(window); window.setAlwaysOnTop(true, 'pop-up-menu');
+      item = { win: window }; barWindows.set(bar.handle, item);
+      window.on('closed', () => { if (barWindows.get(bar.handle) === item) barWindows.delete(bar.handle); });
+      await window.loadFile(path.join(__dirname, 'bar.html'));
+    }
+    if (!settings.systemBarEnabled || quitting || item.win.isDestroyed()) continue;
+    item.win.setBounds(bounds);
+    const actual = item.win.getBounds();
+    if (actual.y < rect.y || actual.y + actual.height > rect.y + rect.height) { item.win.hide(); continue; }
+    item.win.webContents.send('quota:changed', snapshot()); item.win.showInactive();
+  }
+  for (const [key, item] of barWindows) if (!active.has(key)) { item.win.destroy(); barWindows.delete(key); }
+  state.systemBarReason = [...barWindows.values()].some(item => item.win.isVisible()) ? 'visible' : 'no-safe-taskbar-space';
+  publish();
+}
+function setSystemBar(enabled) {
+  settings.systemBarEnabled = enabled; persist();
+  if (process.platform === 'win32') {
+    if (!enabled) { taskbarWatcher?.stop(); taskbarWatcher = null; for (const item of [...barWindows.values()]) item.win.destroy(); barWindows.clear(); }
+    else if (!taskbarWatcher) {
+      taskbarWatcher = new TaskbarWatcher();
+      taskbarWatcher.on('layout', data => updateTaskbars(data).catch(() => { state.systemBarReason = 'layout-unavailable'; }));
+      taskbarWatcher.on('unavailable', () => { for (const item of barWindows.values()) item.win.hide(); state.systemBarReason = 'taskbar-unavailable'; publish(); });
+      taskbarWatcher.start();
+    }
+  }
+  publish();
+}
+// Local diagnostics capture only this companion's owned UI, never other apps.
+async function savePreviews() {
+  const dir = path.join(app.getPath('userData'), 'previews');
+  fs.mkdirSync(dir, { recursive: true });
+  const metadata = { checkedAt: Date.now(), bars: [] };
+  let index = 0;
+  for (const item of barWindows.values()) {
+    metadata.bars.push({ bounds: item.win.getBounds(), visible: item.win.isVisible() });
+    fs.writeFileSync(path.join(dir, `taskbar-${index++}.png`), (await item.win.webContents.capturePage()).toPNG());
+  }
+  const wasPopover = popover, previousBounds = win.getBounds();
+  popover = true; win.setBounds({ ...previousBounds, width: PANEL_WIDTH, height: PANEL_HEIGHT }); publish();
+  await new Promise(resolve => setTimeout(resolve, 150));
+  try { fs.writeFileSync(path.join(dir, 'panel.png'), (await win.webContents.capturePage()).toPNG()); }
+  finally { popover = wasPopover; win.setBounds(previousBounds); publish(); }
+  fs.writeFileSync(path.join(dir, 'metadata.json'), JSON.stringify(metadata));
+}
 
 async function refresh() {
   if (refreshing || quitting || smoke) return;
@@ -126,6 +223,8 @@ function menuItems() {
     { label: choose('显示 / 隐藏', 'Show / hide'), click: toggle },
     { label: choose('立即刷新', 'Refresh now'), enabled: !refreshing && !smoke, click: refresh },
     { label: choose('折叠成小条', 'Compact mode'), type: 'checkbox', checked: settings.collapsed, click: collapse },
+    { label: process.platform === 'darwin' ? choose('菜单栏显示额度', 'Show quota in menu bar') : choose('任务栏显示额度', 'Show quota in taskbar'), type: 'checkbox', checked: settings.systemBarEnabled, click: item => setSystemBar(item.checked) },
+    { label: choose('外观', 'Appearance'), submenu: [['system', '跟随系统', 'System'], ['light', '浅色', 'Light'], ['dark', '深色', 'Dark']].map(([value, zh, en]) => ({ label: choose(zh, en), type: 'radio', checked: settings.theme === value, click: () => { settings.theme = value; nativeTheme.themeSource = value; persist(); publish(); } })) },
     { label: choose('输入框额度条（实验）', 'Composer quota strip (experimental)'), type: 'checkbox', checked: settings.composerEnabled, click: item => setComposer(item.checked) },
     { label: composerStatusText(), click: () => dialog.showMessageBox(win, { type: 'info', title: 'Codex Quota', message: composerStatusText(), detail: choose('通过本机 CDP 添加独立额度条；不会读取或修改输入内容。没有足够空间时自动隐藏。关闭实验模式即可移除。', 'Adds a separate strip through local CDP. It does not read or modify editor content. Hidden automatically when space is insufficient; disable this mode to remove it.') }) },
     { label: choose('启动 Codex（输入框模式）', 'Launch Codex (composer mode)'), enabled: !smoke, click: launchCodex },
@@ -164,11 +263,11 @@ function menuItems() {
 }
 
 function updateTray() {
-  if (!tray) return;
+  if (!tray || tray.isDestroyed()) return;
   const q = state.quota;
   const label = `5h ${q?.short ? Math.round(q.short.remaining) + '%' : '—'} · 7d ${q?.weekly ? Math.round(q.weekly.remaining) + '%' : '—'}`;
   tray.setToolTip(`Codex Quota · ${label}${state.error ? choose(' · 更新失败', ' · update failed') : ''}`);
-  tray.setContextMenu(Menu.buildFromTemplate(menuItems()));
+  if (process.platform === 'darwin') tray.setTitle(settings.systemBarEnabled ? `5h ${q?.short ? Math.round(q.short.remaining) + '%' : '—'}  7d ${q?.weekly ? Math.round(q.weekly.remaining) + '%' : '—'}${state.error ? ' •' : ''}` : '', { fontType: 'monospacedDigit' });
 }
 
 async function smokeTest() {
@@ -182,21 +281,40 @@ async function smokeTest() {
   assert.equal(await evaluate("document.querySelector('#weekly-percent').textContent"), '28%');
   checks.push('renderer receives normalized quota through isolated preload');
   fs.writeFileSync(path.join(out, 'expanded.png'), (await win.webContents.capturePage()).toPNG());
+  nativeTheme.themeSource = 'light'; await settle();
+  fs.writeFileSync(path.join(out, 'light.png'), (await win.webContents.capturePage()).toPNG());
+  const lightInk = await evaluate("getComputedStyle(document.body).color");
+  nativeTheme.themeSource = 'dark'; await settle();
+  assert.notEqual(await evaluate("getComputedStyle(document.body).color"), lightInk);
+  fs.writeFileSync(path.join(out, 'dark.png'), (await win.webContents.capturePage()).toPNG());
+  checks.push('native light and dark appearance both render');
+  nativeTheme.themeSource = settings.theme;
   await evaluate("document.querySelector('#collapse').click()"); await settle();
   assert.equal(settings.collapsed, true); assert.equal(win.getBounds().height, 78);
   checks.push('collapse control changes native window size');
   fs.writeFileSync(path.join(out, 'compact.png'), (await win.webContents.capturePage()).toPNG());
   await evaluate("document.querySelector('#compact-expand').click()"); await settle();
-  assert.equal(settings.collapsed, false); assert.equal(win.getBounds().height, 254);
+  assert.equal(settings.collapsed, false); assert.equal(win.getBounds().height, PANEL_HEIGHT);
   checks.push('expand control restores window');
   win.showInactive(); await evaluate("document.querySelector('#hide').click()"); await settle();
   assert.equal(win.isVisible(), false); show(); assert.equal(win.isVisible(), true);
   checks.push('hide to tray and restore');
-  assert.equal(Menu.buildFromTemplate(menuItems()).items.length, 17);
+  assert.ok(Menu.buildFromTemplate(menuItems()).items.some(item => item.label === '任务栏显示额度' || item.label === '菜单栏显示额度'));
   checks.push('native tray menu constructs');
+  if (process.platform === 'darwin') { assert.match(tray.getTitle(), /5h 64%.*7d 28%/); checks.push('macOS menu bar title contains both remaining quotas'); }
   settings.language = 'en'; publish(); await settle();
   assert.equal(await evaluate("document.querySelector('#short-title').textContent"), '5 hours');
   checks.push('English language');
+  const fixtureBar = new BrowserWindow({ width: 178, height: 32, show: false, frame: false, transparent: true, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  barWindows.set('fixture', { win: fixtureBar });
+  await fixtureBar.loadFile(path.join(__dirname, 'bar.html')); publish(); await settle();
+  assert.equal(await fixtureBar.webContents.executeJavaScript("document.querySelector('#short').textContent"), '64%');
+  assert.equal(await fixtureBar.webContents.executeJavaScript("document.querySelector('#weekly').textContent"), '28%');
+  fs.writeFileSync(path.join(out, 'taskbar.png'), (await fixtureBar.webContents.capturePage()).toPNG());
+  await fixtureBar.webContents.executeJavaScript("document.querySelector('#bar').click()"); await settle();
+  assert.equal(popover, true); assert.equal(win.getBounds().height, PANEL_HEIGHT);
+  checks.push('taskbar quota rings and click-to-open details');
+  hide(); fixtureBar.destroy(); barWindows.delete('fixture');
   state.error = 'CONNECTION_FAILED'; publish(); await settle();
   assert.match(await evaluate("document.querySelector('#status-text').textContent"), /failed/i);
   checks.push('failed refresh explicitly marks cached data');
@@ -216,7 +334,10 @@ else {
     else if (argv.includes('--composer-on')) setComposer(true);
     else if (argv.includes('--composer-off')) setComposer(false);
     else if (argv.includes('--launch-codex')) launchCodex();
-    else if (argv.includes('--hide')) win.hide();
+    else if (argv.includes('--system-bar-on')) setSystemBar(true);
+    else if (argv.includes('--system-bar-off')) setSystemBar(false);
+    else if (argv.includes('--save-previews')) savePreviews().catch(() => {});
+    else if (argv.includes('--hide')) hide();
     else if (argv.includes('--toggle')) toggle();
     else show();
   });
@@ -233,15 +354,17 @@ else {
       ...position(), frame: false, transparent: true, resizable: false,
       alwaysOnTop: settings.topmost, skipTaskbar: true, show: false,
       hasShadow: false, fullscreenable: false, maximizable: false,
+      ...(process.platform === 'darwin' ? { vibrancy: 'popover', visualEffectState: 'active' } : {}),
       webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true }
     });
     win.setOpacity(settings.opacity);
     if (settings.topmost) win.setAlwaysOnTop(true, 'floating');
     if (process.platform === 'darwin') { win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); app.dock?.hide(); }
-    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    win.webContents.on('will-navigate', event => event.preventDefault());
-    win.on('close', event => { if (!quitting) { event.preventDefault(); win.hide(); } });
+    secureContents(win);
+    win.on('close', event => { if (!quitting) { event.preventDefault(); hide(); } });
+    win.on('blur', () => { if (popover && !hoverOnly) hide(); });
     win.on('moved', () => {
+      if (popover) return;
       const [x, y] = win.getPosition(); settings.position = { x, y };
       clearTimeout(saveTimer); saveTimer = setTimeout(persist, 300);
     });
@@ -249,24 +372,35 @@ else {
     screen.on('display-metrics-changed', () => { win.setBounds(position()); });
     ipcMain.handle('quota:state', () => snapshot());
     ipcMain.on('quota:action', (event, action) => {
+      const barItem = [...barWindows.values()].find(item => item.win.webContents === event.sender);
+      if (barItem) {
+        if (action === 'details') togglePopover(barItem.win.getBounds());
+        else if (action === 'preview') openPopover(barItem.win.getBounds(), true);
+        else if (action === 'leave') closePreviewLater();
+        else if (action === 'menu') Menu.buildFromTemplate(menuItems()).popup();
+        return;
+      }
       if (event.sender !== win.webContents) return;
       if (action === 'refresh') refresh();
       else if (action === 'collapse') collapse();
-      else if (action === 'hide') win.hide();
+      else if (action === 'hide') hide();
       else if (action === 'menu') Menu.buildFromTemplate(menuItems()).popup({ window: win });
     });
     const trayIcon = nativeImage.createFromPath(path.join(__dirname, '..', 'assets', process.platform === 'darwin' ? 'trayTemplate.png' : 'icon.png')).resize({ width: process.platform === 'darwin' ? 18 : 24, height: process.platform === 'darwin' ? 18 : 24 });
     if (process.platform === 'darwin') trayIcon.setTemplateImage(true);
     tray = new Tray(trayIcon);
-    tray.on('double-click', show); tray.on('click', () => { if (process.platform === 'win32') toggle(); });
+    tray.on('click', (_event, bounds) => togglePopover(bounds || tray.getBounds()));
+    tray.on('right-click', () => Menu.buildFromTemplate(menuItems()).popup());
     updateTray();
     const shortcut = globalShortcut.register('CommandOrControl+Shift+Q', toggle);
     state.shortcutAvailable = shortcut;
     powerMonitor.on('resume', () => refresh());
+    nativeTheme.on('updated', publish);
     await win.loadFile(path.join(__dirname, 'index.html'));
     if (smoke) await smokeTest();
     else {
-      if (!process.argv.includes('--background')) show();
+      if (process.argv.includes('--show') || !process.argv.includes('--background') && !settings.systemBarEnabled) show();
+      setSystemBar(settings.systemBarEnabled);
       refresh();
       if (settings.composerEnabled) await setComposer(true);
       if (process.argv.includes('--launch-codex')) await launchCodex();
@@ -277,7 +411,7 @@ else {
     quitting = true; app.exit(1);
   });
   app.on('before-quit', event => {
-    quitting = true; clearTimeout(timer); clearTimeout(saveTimer); client?.close(); globalShortcut.unregisterAll();
+    quitting = true; clearTimeout(timer); clearTimeout(saveTimer); clearTimeout(popupCloseTimer); taskbarWatcher?.stop(); client?.close(); globalShortcut.unregisterAll();
     if (bridge && !cleanupComplete) {
       event.preventDefault();
       if (!cleanupInFlight) { cleanupInFlight = true; bridge.stop().finally(() => { cleanupComplete = true; app.quit(); }); }

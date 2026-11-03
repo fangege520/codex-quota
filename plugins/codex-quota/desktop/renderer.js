@@ -12,12 +12,17 @@ function paint(state) {
   document.body.classList.toggle('collapsed', state.settings.collapsed);
   document.body.classList.toggle('warning', stale);
   text('remaining-title', t('剩余额度', 'REMAINING QUOTA'));
+  text('window-hint', t('用量窗口', 'USAGE WINDOWS'));
+  text('live-tag', stale ? t('缓存', 'CACHED') : state.demo ? 'DEMO' : 'LIVE');
   text('short-title', t('5 小时', '5 hours'));
   text('weekly-title', t('7 天', '7 days'));
   text('plan', state.demo ? t('演示', 'DEMO') : (state.quota?.plan || 'CODEX').toUpperCase());
   for (const [id, value] of [['short', state.quota?.short], ['weekly', state.quota?.weekly]]) {
     const percent = value ? `${Math.round(value.remaining)}%` : '—';
     text(`${id}-percent`, percent); text(`compact-${id}`, percent);
+    $(`${id}-ring`).style.setProperty('--remaining', value?.remaining || 0);
+    const tone = value && value.remaining <= 10 ? '#d87976' : value && value.remaining <= 30 ? '#d7a043' : id === 'short' ? 'var(--accent)' : 'var(--weekly)';
+    $(`${id}-ring`).closest('.quota-row').style.setProperty('--tone', tone);
     const bar = $(`${id}-bar`);
     bar.value = value?.remaining || 0;
     bar.style.setProperty('--bar', !value ? '#555d50' : value.remaining <= 10 ? '#ec9292' : value.remaining <= 30 ? '#e9bc80' : '#a9e9ad');
