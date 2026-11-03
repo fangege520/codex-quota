@@ -16,9 +16,9 @@ function prepareRuntime(source, base) {
   // Codex can replace its plugin cache at startup. Keep both the application
   // files and Electron outside that cache so the companion survives refreshes.
   for (const name of ['desktop', 'lib', 'assets', 'package.json', 'package-lock.json']) {
-    fs.cpSync(path.join(source, name), path.join(target, name), { recursive: true });
+    fs.cpSync(path.join(source, name), path.join(target, name), { recursive: true, verbatimSymlinks: true });
   }
-  if (!fs.existsSync(path.join(target, binary))) fs.cpSync(path.join(source, 'node_modules'), path.join(target, 'node_modules'), { recursive: true });
+  if (!fs.existsSync(path.join(target, binary))) fs.cpSync(path.join(source, 'node_modules'), path.join(target, 'node_modules'), { recursive: true, verbatimSymlinks: true });
   return { app: target, electron: require(path.join(target, 'node_modules', 'electron')) };
 }
 module.exports = { prepareRuntime };

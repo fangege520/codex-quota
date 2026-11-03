@@ -17,12 +17,17 @@ test('persistent runtime still launches after plugin cache dependencies are remo
     const binary = process.platform === 'win32' ? 'electron.exe' : 'Electron.app/Contents/MacOS/Electron';
     write(path.join(source, 'node_modules/electron/dist', binary), 'test binary');
     write(path.join(source, 'node_modules/electron/index.js'), "module.exports=require('node:path').join(__dirname,'dist'," + JSON.stringify(binary) + ');');
+    if (process.platform !== 'win32') fs.symlinkSync('index.js', path.join(source, 'node_modules/electron/relative-resource'));
     const first = prepareRuntime(source, base);
     assert.ok(first.app.startsWith(base + path.sep));
     assert.equal(fs.readFileSync(first.electron, 'utf8'), 'test binary');
     fs.rmSync(path.join(source, 'node_modules'), { recursive: true });
     const second = prepareRuntime(source, base);
     assert.deepEqual(second, first);
+    if (process.platform !== 'win32') {
+      assert.equal(fs.readlinkSync(path.join(second.app, 'node_modules/electron/relative-resource')), 'index.js');
+      assert.ok(fs.readFileSync(path.join(second.app, 'node_modules/electron/relative-resource'), 'utf8').includes('module.exports'));
+    }
     assert.equal(fs.readFileSync(path.join(second.app, 'desktop/fixture.txt'), 'utf8'), 'desktop');
     write(path.join(source, 'package.json'), '{"version":"../outside"}');
     assert.throws(() => prepareRuntime(source, base), /INVALID_RUNTIME_VERSION/);
