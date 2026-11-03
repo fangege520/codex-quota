@@ -10,6 +10,7 @@ const { ComposerBridge, DEFAULT_PORT, validPort } = require('../lib/composer.cjs
 const { discoverDesktopApp, launchDesktop } = require('../lib/desktop-app.cjs');
 const { findFreeBounds, popoverBounds, TaskbarWatcher } = require('../lib/system-bar.cjs');
 const PANEL_WIDTH = 380, PANEL_HEIGHT = 324;
+if (process.platform === 'win32') app.commandLine.appendSwitch('force-renderer-accessibility');
 
 const smoke = process.argv.includes('--smoke-test');
 if (smoke && !process.env.CODEX_QUOTA_TEST_DIR) throw new Error('Smoke test needs an isolated output directory');

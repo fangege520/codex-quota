@@ -11,6 +11,7 @@ function paint(state) {
     document.getElementById(id + '-ring').style.setProperty('--remaining', Number.isFinite(value) ? value : 0);
   }
   bar.title = `Codex · 5h ${document.getElementById('short').textContent} · 7d ${document.getElementById('weekly').textContent}${stale ? ' · cached / 缓存' : ''}`;
+  bar.setAttribute('aria-label', bar.title);
 }
 bar.addEventListener('click', () => window.quota.action('details'));
 bar.addEventListener('mouseenter', () => window.quota.action('preview'));
