@@ -34,6 +34,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run smoke
+      - run: npm run test:composer
       - run: npm ci
         working-directory: .
       - run: npm run dist -- --${{ matrix.platform }} --${{ matrix.arch }}

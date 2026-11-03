@@ -6,6 +6,8 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const { CodexClient, discoverCodex } = require('../lib/codex.cjs');
 const { normalizeQuota, clampBounds } = require('../lib/quota.cjs');
+const { ComposerBridge, DEFAULT_PORT, validPort } = require('../lib/composer.cjs');
+const { discoverDesktopApp, launchDesktop } = require('../lib/desktop-app.cjs');
 
 const smoke = process.argv.includes('--smoke-test');
 if (smoke && !process.env.CODEX_QUOTA_TEST_DIR) throw new Error('Smoke test needs an isolated output directory');
@@ -21,9 +23,15 @@ const settings = {
   interval: [30, 60, 120].includes(saved.interval) ? saved.interval : 60,
   language: ['zh', 'en'].includes(saved.language) ? saved.language : null,
   position: saved.position,
-  codexPath: typeof saved.codexPath === 'string' ? saved.codexPath : ''
+  codexPath: typeof saved.codexPath === 'string' ? saved.codexPath : '',
+  composerEnabled: saved.composerEnabled === true,
+  composerPort: validPort(saved.composerPort) ? saved.composerPort : DEFAULT_PORT,
+  desktopAppPath: typeof saved.desktopAppPath === 'string' ? saved.desktopAppPath : ''
 };
+if (process.argv.includes('--composer-on') || process.argv.includes('--launch-codex')) settings.composerEnabled = true;
+if (process.argv.includes('--composer-off')) settings.composerEnabled = false;
 let win, tray, client, timer, saveTimer, quitting = false, refreshing = false, failures = 0;
+let bridge, cleanupComplete = false, cleanupInFlight = false;
 const state = { quota: null, error: null, loading: true, settings, demo: smoke };
 const choose = (zh, en) => settings.language === 'zh' ? zh : en;
 
@@ -35,8 +43,47 @@ function persist() {
 }
 function snapshot() { return JSON.parse(JSON.stringify(state)); }
 function publish() {
+  bridge?.update(state);
   if (win && !win.isDestroyed()) win.webContents.send('quota:changed', snapshot());
+  if (!smoke) {
+    try {
+      fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
+      fs.writeFileSync(path.join(path.dirname(settingsFile), 'runtime-status.json'), JSON.stringify({ pid: process.pid, windowVisible: !!win?.isVisible(), composer: state.composer || { phase: 'disabled' }, updatedAt: Date.now() }));
+    } catch {}
+  }
   updateTray();
+}
+async function setComposer(enabled) {
+  settings.composerEnabled = enabled;
+  if (enabled && !settings.desktopAppPath) {
+    try { settings.desktopAppPath = discoverDesktopApp(); } catch {}
+  }
+  persist();
+  if (enabled) {
+    if (!bridge) {
+      bridge = new ComposerBridge({ port: settings.composerPort });
+      bridge.on('status', status => { state.composer = status; publish(); });
+    }
+    bridge.update(state); bridge.start();
+  } else await bridge?.stop();
+  publish();
+}
+function composerStatusText() {
+  const status = state.composer;
+  if (!settings.composerEnabled) return choose('输入框模式已关闭', 'Composer mode is off');
+  if (status?.visible) return choose(`已在 ${status.visible} 个窗口显示额度条`, `Quota strip visible in ${status.visible} window(s)`);
+  if (status?.phase === 'connected') return choose('已连接，等待输入框或足够的显示空间', 'Connected; waiting for a composer with enough space');
+  return choose(`等待本机调试连接（端口 ${settings.composerPort}）`, `Waiting for local debugging connection (port ${settings.composerPort})`);
+}
+async function launchCodex() {
+  try {
+    await setComposer(true);
+    await launchDesktop({ executable: settings.desktopAppPath || undefined, port: settings.composerPort });
+  } catch (error) {
+    const restart = error.message === 'CODEX_RESTART_REQUIRED';
+    await dialog.showMessageBox(win, { type: 'info', title: 'Codex Quota', message: restart ? choose('请先完全退出 Codex，再启动输入框模式', 'Quit Codex completely before launching composer mode') : choose('未能启动 Codex', 'Could not launch Codex'),
+      detail: restart ? choose('当前 Codex 没有可用的调试连接。请等待任务结束并退出 Codex，额度助手保持运行；再从托盘菜单点击“启动 Codex（输入框模式）”。助手不会强制结束任务。', 'Wait for tasks to finish and quit Codex. Keep this helper running, then select Launch Codex (composer mode) from its tray menu. It never force-quits Codex.') : choose('请确认 Codex 已安装；可以设置 CODEX_QUOTA_APP_PATH 后重新启动额度助手。', 'Check that Codex is installed. You can set CODEX_QUOTA_APP_PATH and restart the helper.') });
+  }
 }
 function position() {
   const primary = screen.getPrimaryDisplay();
@@ -79,6 +126,9 @@ function menuItems() {
     { label: choose('显示 / 隐藏', 'Show / hide'), click: toggle },
     { label: choose('立即刷新', 'Refresh now'), enabled: !refreshing && !smoke, click: refresh },
     { label: choose('折叠成小条', 'Compact mode'), type: 'checkbox', checked: settings.collapsed, click: collapse },
+    { label: choose('输入框额度条（实验）', 'Composer quota strip (experimental)'), type: 'checkbox', checked: settings.composerEnabled, click: item => setComposer(item.checked) },
+    { label: composerStatusText(), click: () => dialog.showMessageBox(win, { type: 'info', title: 'Codex Quota', message: composerStatusText(), detail: choose('通过本机 CDP 添加独立额度条；不会读取或修改输入内容。没有足够空间时自动隐藏。关闭实验模式即可移除。', 'Adds a separate strip through local CDP. It does not read or modify editor content. Hidden automatically when space is insufficient; disable this mode to remove it.') }) },
+    { label: choose('启动 Codex（输入框模式）', 'Launch Codex (composer mode)'), enabled: !smoke, click: launchCodex },
     { label: choose('始终置顶', 'Always on top'), type: 'checkbox', checked: settings.topmost, click: item => {
       settings.topmost = item.checked; win.setAlwaysOnTop(item.checked, 'floating'); persist(); publish();
     } },
@@ -142,7 +192,7 @@ async function smokeTest() {
   win.showInactive(); await evaluate("document.querySelector('#hide').click()"); await settle();
   assert.equal(win.isVisible(), false); show(); assert.equal(win.isVisible(), true);
   checks.push('hide to tray and restore');
-  assert.equal(Menu.buildFromTemplate(menuItems()).items.length, 14);
+  assert.equal(Menu.buildFromTemplate(menuItems()).items.length, 17);
   checks.push('native tray menu constructs');
   settings.language = 'en'; publish(); await settle();
   assert.equal(await evaluate("document.querySelector('#short-title').textContent"), '5 hours');
@@ -163,6 +213,9 @@ else {
   app.on('second-instance', (_event, argv) => {
     if (!win) return;
     if (argv.includes('--quit')) quit();
+    else if (argv.includes('--composer-on')) setComposer(true);
+    else if (argv.includes('--composer-off')) setComposer(false);
+    else if (argv.includes('--launch-codex')) launchCodex();
     else if (argv.includes('--hide')) win.hide();
     else if (argv.includes('--toggle')) toggle();
     else show();
@@ -170,6 +223,7 @@ else {
   app.whenReady().then(async () => {
     if (process.argv.includes('--quit') || process.argv.includes('--hide')) { quit(); return; }
     if (!settings.language) settings.language = app.getLocale().startsWith('zh') ? 'zh' : 'en';
+    if (process.env.CODEX_QUOTA_APP_PATH) settings.desktopAppPath = process.env.CODEX_QUOTA_APP_PATH;
     if (smoke) {
       settings.language = 'zh'; settings.collapsed = false; settings.topmost = true;
       state.quota = normalizeQuota({ rateLimits: { planType: 'plus', primary: { usedPercent: 36, windowDurationMins: 300, resetsAt: Math.floor(Date.now() / 1000) + 12000 }, secondary: { usedPercent: 72, windowDurationMins: 10080, resetsAt: Math.floor(Date.now() / 1000) + 172800 } } });
@@ -211,15 +265,25 @@ else {
     powerMonitor.on('resume', () => refresh());
     await win.loadFile(path.join(__dirname, 'index.html'));
     if (smoke) await smokeTest();
-    else { if (!process.argv.includes('--background')) show(); refresh(); }
+    else {
+      if (!process.argv.includes('--background')) show();
+      refresh();
+      if (settings.composerEnabled) await setComposer(true);
+      if (process.argv.includes('--launch-codex')) await launchCodex();
+    }
   }).catch(error => {
     if (smoke) { fs.writeFileSync(path.join(process.env.CODEX_QUOTA_TEST_DIR, 'failure.txt'), error.stack); process.exitCode = 1; }
     else dialog.showErrorBox('Codex Quota', choose('启动失败，请重新安装悬浮窗。', 'Could not start. Please reinstall the overlay.'));
     quitting = true; app.exit(1);
   });
-  app.on('before-quit', () => {
+  app.on('before-quit', event => {
     quitting = true; clearTimeout(timer); clearTimeout(saveTimer); client?.close(); globalShortcut.unregisterAll();
+    if (bridge && !cleanupComplete) {
+      event.preventDefault();
+      if (!cleanupInFlight) { cleanupInFlight = true; bridge.stop().finally(() => { cleanupComplete = true; app.quit(); }); }
+    }
   });
+  app.on('will-quit', () => { if (!smoke) { try { fs.rmSync(path.join(path.dirname(settingsFile), 'runtime-status.json'), { force: true }); } catch {} } });
   app.on('window-all-closed', () => {});
   app.on('activate', () => { if (win) show(); });
 }
