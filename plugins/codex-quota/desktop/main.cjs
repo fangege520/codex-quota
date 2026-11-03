@@ -154,7 +154,7 @@ async function updateTaskbars(data) {
     const bounds = bar.visible && bar.accurate && onScreen && !fullscreen && findFreeBounds(rect, occupied, 178, 36, item?.preferred);
     if (!bounds) { item?.win.hide(); continue; }
     if (!item) {
-      const window = new BrowserWindow({ ...bounds, frame: false, transparent: true, resizable: false, show: false, skipTaskbar: true, focusable: false, hasShadow: false, alwaysOnTop: true, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+      const window = new BrowserWindow({ ...bounds, frame: false, transparent: true, resizable: false, show: false, skipTaskbar: true, hasShadow: false, alwaysOnTop: true, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
       secureContents(window); window.setAlwaysOnTop(true, 'pop-up-menu');
       item = { win: window }; barWindows.set(bar.handle, item);
       window.on('closed', () => { if (barWindows.get(bar.handle) === item) barWindows.delete(bar.handle); });
@@ -315,6 +315,9 @@ async function smokeTest() {
   await fixtureBar.webContents.executeJavaScript("document.querySelector('#bar').click()"); await settle();
   assert.equal(popover, true); assert.equal(win.getBounds().height, PANEL_HEIGHT);
   checks.push('taskbar quota rings and click-to-open details');
+  await fixtureBar.webContents.executeJavaScript("document.querySelector('#bar').click()"); await settle();
+  assert.equal(popover, false);
+  checks.push('clicking the taskbar quota again closes details');
   hide(); fixtureBar.destroy(); barWindows.delete('fixture');
   state.error = 'CONNECTION_FAILED'; publish(); await settle();
   assert.match(await evaluate("document.querySelector('#status-text').textContent"), /failed/i);
@@ -363,7 +366,9 @@ else {
     if (process.platform === 'darwin') { win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); app.dock?.hide(); }
     secureContents(win);
     win.on('close', event => { if (!quitting) { event.preventDefault(); hide(); } });
-    win.on('blur', () => { if (popover && !hoverOnly) hide(); });
+    win.on('blur', () => {
+      if (popover && !hoverOnly && ![...barWindows.values()].some(item => item.win === BrowserWindow.getFocusedWindow())) hide();
+    });
     win.on('moved', () => {
       if (popover) return;
       const [x, y] = win.getPosition(); settings.position = { x, y };
