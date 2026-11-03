@@ -1,0 +1,32 @@
+name: Check desktop plugin
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: plugins/codex-quota
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: plugins/codex-quota/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run smoke
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-check-${{ matrix.os }}
+          path: plugins/codex-quota/test-results/

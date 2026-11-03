@@ -1,0 +1,25 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "codex-quota",
+  "version": "0.1.0",
+  "repository": "https://github.com/fangege520/codex-quota",
+  "description": "Keep Codex quota visible in a draggable desktop overlay on macOS and Windows.",
+  "license": "MIT",
+  "keywords": ["codex", "quota", "desktop", "macos", "windows"],
+  "extensions": {
+    "com.openai": {
+      "onboardingSkill": "./skills/quota-overlay/SKILL.md",
+      "interface": {
+        "displayName": "Codex Quota · 额度悬浮窗",
+        "shortDescription": "5 小时与每周剩余额度，一直看得见",
+        "longDescription": "Community desktop plugin. Install and manage a draggable, always-on-top quota overlay with tray controls. Reads quota through the local Codex app-server; no inference requests.",
+        "developerName": "fangege520",
+        "category": "Productivity",
+        "brandColor": "#A9E9AD",
+        "composerIcon": "./assets/icon.png",
+        "logo": "./assets/icon.png",
+        "defaultPrompt": ["安装并启动 Codex 额度悬浮窗", "隐藏、显示或退出额度悬浮窗"]
+      }
+    }
+  }
+}

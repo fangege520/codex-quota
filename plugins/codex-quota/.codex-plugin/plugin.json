@@ -1,0 +1,15 @@
+{
+  "name": "codex-quota",
+  "version": "0.1.0",
+  "description": "Codex quota desktop overlay for macOS and Windows.",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex Quota · 额度悬浮窗",
+    "shortDescription": "5 小时与每周剩余额度，一直看得见",
+    "developerName": "fangege520",
+    "category": "Productivity",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/icon.png"
+  },
+  "extensions": { "com.openai": { "onboardingSkill": "./skills/quota-overlay/SKILL.md" } }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "codex-quota-marketplace",
+  "interface": { "displayName": "Codex Quota · 额度悬浮窗" },
+  "plugins": [
+    {
+      "name": "codex-quota",
+      "source": { "source": "local", "path": "./plugins/codex-quota" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Productivity"
+    }
+  ]
+}

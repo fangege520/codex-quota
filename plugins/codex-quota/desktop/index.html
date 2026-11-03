@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex Quota</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="renderer.js"></script>
+</head>
+<body>
+  <main id="panel">
+    <header class="drag">
+      <div class="brand"><span class="mark">↗</span><span>CODEX <b>QUOTA</b></span></div>
+      <div class="controls no-drag">
+        <button id="menu" title="设置 / Settings" aria-label="Settings">···</button>
+        <button id="collapse" title="折叠 / Compact" aria-label="Compact">⌃</button>
+        <button id="hide" title="隐藏到托盘 / Hide to tray" aria-label="Hide">−</button>
+      </div>
+    </header>
+    <div id="expanded">
+      <div class="intro"><span id="remaining-title">剩余额度</span><span class="plan" id="plan">CODEX</span></div>
+      <section class="quota-row">
+        <div class="row"><span id="short-title">5 小时</span><span class="percent" id="short-percent">—</span></div>
+        <progress id="short-bar" max="100" value="0" aria-label="5 hour remaining quota"></progress>
+        <div class="reset" id="short-reset">读取中…</div>
+      </section>
+      <section class="quota-row">
+        <div class="row"><span id="weekly-title">7 天</span><span class="percent" id="weekly-percent">—</span></div>
+        <progress id="weekly-bar" max="100" value="0" aria-label="Weekly remaining quota"></progress>
+        <div class="reset" id="weekly-reset">读取中…</div>
+      </section>
+      <footer><span id="status-dot"></span><span id="status-text">正在连接</span><button id="refresh" class="no-drag" title="立即刷新 / Refresh" aria-label="Refresh">↻</button></footer>
+    </div>
+    <div id="compact" class="drag">
+      <span class="mini-mark">↗</span>
+      <span>5h <strong id="compact-short">—</strong></span><span class="divider"></span>
+      <span>7d <strong id="compact-weekly">—</strong></span>
+      <span id="compact-status">●</span>
+      <button id="compact-expand" class="no-drag" aria-label="Expand" title="展开 / Expand">⌄</button>
+      <button id="compact-hide" class="no-drag" aria-label="Hide" title="隐藏 / Hide">−</button>
+    </div>
+  </main>
+</body>
+</html>
