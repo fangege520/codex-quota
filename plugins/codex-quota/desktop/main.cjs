@@ -41,6 +41,7 @@ if (process.argv.includes('--composer-off')) settings.composerEnabled = false;
 let win, tray, client, timer, saveTimer, quitting = false, refreshing = false, failures = 0;
 let bridge, cleanupComplete = false, cleanupInFlight = false;
 let taskbarWatcher, popover = false, hoverOnly = false, popupCloseTimer;
+let activeSettingsMenu = null;
 const barWindows = new Map();
 const state = { quota: null, error: null, loading: true, settings, demo: smoke };
 const choose = (zh, en) => settings.language === 'zh' ? zh : en;
@@ -114,8 +115,8 @@ function collapse() {
   settings.collapsed = !settings.collapsed;
   fitWindow(); persist(); publish();
 }
-function show() { popover = false; hoverOnly = false; clearTimeout(popupCloseTimer); win.setBounds(position()); win.setAlwaysOnTop(settings.topmost, 'floating'); win.setOpacity(settings.opacity); publish(); win.show(); if (process.platform === 'darwin') app.dock?.hide(); }
-function hide() { clearTimeout(popupCloseTimer); win.hide(); popover = false; hoverOnly = false; }
+function show() { popover = false; hoverOnly = false; clearTimeout(popupCloseTimer); win.setBounds(position()); win.setAlwaysOnTop(settings.topmost, 'floating'); win.setOpacity(settings.opacity); publish(); win.show(); publish(); if (process.platform === 'darwin') app.dock?.hide(); }
+function hide() { const menu = activeSettingsMenu; activeSettingsMenu = null; menu?.closePopup(win); clearTimeout(popupCloseTimer); win.hide(); popover = false; hoverOnly = false; publish(); }
 function toggle() { win.isVisible() ? hide() : show(); }
 function quit() { quitting = true; app.quit(); }
 function openPopover(anchor, preview = false) {
@@ -125,12 +126,20 @@ function openPopover(anchor, preview = false) {
   win.setBounds(popoverBounds(anchor, area, PANEL_WIDTH, PANEL_HEIGHT));
   win.setAlwaysOnTop(true, 'pop-up-menu'); win.setOpacity(1); publish();
   if (preview) win.showInactive(); else { win.show(); win.focus(); }
+  publish();
 }
 function togglePopover(anchor) { if (win.isVisible() && popover && !hoverOnly) hide(); else openPopover(anchor); }
 function openSettings() {
+  if (activeSettingsMenu) return activeSettingsMenu;
+  const menu = Menu.buildFromTemplate(menuItems()); activeSettingsMenu = menu;
   const cursor = screen.getCursorScreenPoint();
   openPopover({ x: cursor.x, y: cursor.y, width: 1, height: 1 });
-  const menu = Menu.buildFromTemplate(menuItems()); menu.popup({ window: win }); return menu;
+  menu.popup({ window: win, callback: () => {
+    if (activeSettingsMenu !== menu) return;
+    activeSettingsMenu = null;
+    if (popover && !win.isFocused()) hide();
+  } });
+  return menu;
 }
 function closePreviewLater() {
   clearTimeout(popupCloseTimer);
@@ -392,7 +401,7 @@ else {
     secureContents(win);
     win.on('close', event => { if (!quitting) { event.preventDefault(); hide(); } });
     win.on('blur', () => {
-      if (popover && !hoverOnly && ![...barWindows.values()].some(item => item.win === BrowserWindow.getFocusedWindow())) hide();
+      if (popover && !hoverOnly && !activeSettingsMenu && ![...barWindows.values()].some(item => item.win === BrowserWindow.getFocusedWindow())) hide();
     });
     win.on('moved', () => {
       if (popover) return;
