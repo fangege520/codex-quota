@@ -52,11 +52,12 @@ function persist() {
   fs.renameSync(temp, settingsFile);
 }
 function snapshot() { const result = JSON.parse(JSON.stringify(state)); if (popover) result.settings.collapsed = false; return result; }
+function barSnapshot(item) { return { ...snapshot(), systemBarCompact: !!item.compact, systemBarTiny: !!item.tiny }; }
 function publish() {
   state.systemDark = settings.theme === 'dark' || settings.theme === 'system' && (nativeTheme.shouldUseDarkColorsForSystemIntegratedUI ?? nativeTheme.shouldUseDarkColors);
   bridge?.update(state);
   if (win && !win.isDestroyed()) win.webContents.send('quota:changed', snapshot());
-  for (const item of barWindows.values()) if (!item.win.isDestroyed()) item.win.webContents.send('quota:changed', snapshot());
+  for (const item of barWindows.values()) if (!item.win.isDestroyed()) item.win.webContents.send('quota:changed', barSnapshot(item));
   if (!smoke) {
     try {
       fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
@@ -75,6 +76,7 @@ async function setComposer(enabled) {
     if (!bridge) {
       bridge = new ComposerBridge({ port: settings.composerPort });
       bridge.on('status', status => { state.composer = status; publish(); });
+      bridge.on('settings', openSettings);
     }
     bridge.update(state); bridge.start();
   } else await bridge?.stop();
@@ -125,6 +127,11 @@ function openPopover(anchor, preview = false) {
   if (preview) win.showInactive(); else { win.show(); win.focus(); }
 }
 function togglePopover(anchor) { if (win.isVisible() && popover && !hoverOnly) hide(); else openPopover(anchor); }
+function openSettings() {
+  const cursor = screen.getCursorScreenPoint();
+  openPopover({ x: cursor.x, y: cursor.y, width: 1, height: 1 });
+  const menu = Menu.buildFromTemplate(menuItems()); menu.popup({ window: win }); return menu;
+}
 function closePreviewLater() {
   clearTimeout(popupCloseTimer);
   popupCloseTimer = setTimeout(() => {
@@ -151,20 +158,24 @@ async function updateTaskbars(data) {
     const fg = screen.screenToDipRect(null, data.foreground);
     const fullscreen = fg.width >= area.width && fg.height >= area.height && fg.x <= area.x && fg.y <= area.y;
     const onScreen = rect.x >= area.x - 2 && rect.y >= area.y - 2 && rect.x + rect.width <= area.x + area.width + 2 && rect.y + rect.height <= area.y + area.height + 2;
-    const bounds = bar.visible && bar.accurate && onScreen && !fullscreen && findFreeBounds(rect, occupied, 178, 36, item?.preferred);
+    const bounds = bar.visible && bar.accurate && onScreen && !fullscreen && (findFreeBounds(rect, occupied, 178, 36, item?.preferred) || findFreeBounds(rect, occupied, 80, 36, item?.preferred) || findFreeBounds(rect, occupied, 48, 36, item?.preferred));
     if (!bounds) { item?.win.hide(); continue; }
     if (!item) {
       const window = new BrowserWindow({ ...bounds, frame: false, transparent: true, resizable: false, show: false, skipTaskbar: true, hasShadow: false, alwaysOnTop: true, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
       secureContents(window); window.setAlwaysOnTop(true, 'pop-up-menu');
-      item = { win: window }; barWindows.set(bar.handle, item);
+      item = { win: window, compact: bounds.width < 178, tiny: bounds.width < 80 }; barWindows.set(bar.handle, item);
       window.on('closed', () => { if (barWindows.get(bar.handle) === item) barWindows.delete(bar.handle); });
       await window.loadFile(path.join(__dirname, 'bar.html'));
     }
     if (!settings.systemBarEnabled || quitting || item.win.isDestroyed()) continue;
     item.win.setBounds(bounds);
     const actual = item.win.getBounds();
-    if (actual.y < rect.y || actual.y + actual.height > rect.y + rect.height) { item.win.hide(); continue; }
-    item.win.webContents.send('quota:changed', snapshot()); item.win.showInactive();
+    const overlaps = occupied.some(r => actual.x < r.x + r.width && actual.x + actual.width > r.x && actual.y < r.y + r.height && actual.y + actual.height > r.y);
+    if (actual.y < rect.y || actual.y + actual.height > rect.y + rect.height || overlaps) { item.win.hide(); continue; }
+    item.compact = bounds.width < 178;
+    item.tiny = bounds.width < 80;
+    item.protected = occupied; item.lane = rect;
+    item.win.webContents.send('quota:changed', barSnapshot(item)); item.win.showInactive();
   }
   for (const [key, item] of barWindows) if (!active.has(key)) { item.win.destroy(); barWindows.delete(key); }
   state.systemBarReason = [...barWindows.values()].some(item => item.win.isVisible()) ? 'visible' : 'no-safe-taskbar-space';
@@ -190,7 +201,7 @@ async function savePreviews() {
   const metadata = { checkedAt: Date.now(), bars: [] };
   let index = 0;
   for (const item of barWindows.values()) {
-    metadata.bars.push({ bounds: item.win.getBounds(), visible: item.win.isVisible() });
+    metadata.bars.push({ bounds: item.win.getBounds(), visible: item.win.isVisible(), lane: item.lane, protected: item.protected });
     fs.writeFileSync(path.join(dir, `taskbar-${index++}.png`), (await item.win.webContents.capturePage()).toPNG());
   }
   const wasPopover = popover, previousBounds = win.getBounds();
@@ -312,6 +323,16 @@ async function smokeTest() {
   assert.equal(await fixtureBar.webContents.executeJavaScript("document.querySelector('#short').textContent"), '64%');
   assert.equal(await fixtureBar.webContents.executeJavaScript("document.querySelector('#weekly').textContent"), '28%');
   fs.writeFileSync(path.join(out, 'taskbar.png'), (await fixtureBar.webContents.capturePage()).toPNG());
+  fixtureBar.setSize(80, 36); barWindows.get('fixture').compact = true; publish(); await settle();
+  assert.equal(await fixtureBar.webContents.executeJavaScript("document.body.classList.contains('compact')"), true);
+  fs.writeFileSync(path.join(out, 'taskbar-compact.png'), (await fixtureBar.webContents.capturePage()).toPNG());
+  checks.push('narrow taskbar renders stacked quotas without covering system widgets');
+  fixtureBar.setSize(48, 36); barWindows.get('fixture').tiny = true; state.quota.short.remaining = 100; publish(); await settle();
+  assert.equal(await fixtureBar.webContents.executeJavaScript("document.querySelector('#short').textContent"), '100%');
+  assert.equal(await fixtureBar.webContents.executeJavaScript("document.querySelector('#bar').scrollWidth <= document.querySelector('#bar').clientWidth"), true);
+  fs.writeFileSync(path.join(out, 'taskbar-tiny.png'), (await fixtureBar.webContents.capturePage()).toPNG());
+  state.quota.short.remaining = 64; publish(); await settle();
+  checks.push('smallest taskbar style fits full and zero quota without horizontal overflow');
   await fixtureBar.webContents.executeJavaScript("document.querySelector('#bar').click()"); await settle();
   assert.equal(popover, true); assert.equal(win.getBounds().height, PANEL_HEIGHT);
   checks.push('taskbar quota rings and click-to-open details');
@@ -319,6 +340,10 @@ async function smokeTest() {
   assert.equal(popover, false);
   checks.push('clicking the taskbar quota again closes details');
   hide(); fixtureBar.destroy(); barWindows.delete('fixture');
+  const settingsMenu = openSettings(); await settle();
+  assert.equal(win.isVisible(), true); assert.equal(popover, true);
+  settingsMenu.closePopup(win); hide();
+  checks.push('settings entry restores configuration while the detail panel is hidden');
   state.error = 'CONNECTION_FAILED'; publish(); await settle();
   assert.match(await evaluate("document.querySelector('#status-text').textContent"), /failed/i);
   checks.push('failed refresh explicitly marks cached data');
@@ -376,7 +401,7 @@ else {
     });
     screen.on('display-removed', () => { win.setBounds(position()); persist(); });
     screen.on('display-metrics-changed', () => { win.setBounds(position()); });
-    ipcMain.handle('quota:state', () => snapshot());
+    ipcMain.handle('quota:state', event => { const item = [...barWindows.values()].find(item => item.win.webContents === event.sender); return item ? barSnapshot(item) : snapshot(); });
     ipcMain.on('quota:action', (event, action) => {
       const barItem = [...barWindows.values()].find(item => item.win.webContents === event.sender);
       if (barItem) {

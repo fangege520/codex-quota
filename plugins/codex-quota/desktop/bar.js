@@ -1,6 +1,8 @@
 'use strict';
 const bar = document.getElementById('bar');
 function paint(state) {
+  document.body.classList.toggle('compact', !!state.systemBarCompact);
+  document.body.classList.toggle('tiny', !!state.systemBarTiny);
   document.body.classList.toggle('dark', state.systemDark);
   const stale = !!state.error || !!state.quota && Date.now() - state.quota.fetchedAt > Math.max(120000, state.settings.interval * 2500);
   document.body.classList.toggle('stale', stale);

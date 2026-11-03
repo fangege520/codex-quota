@@ -37,12 +37,18 @@ async function main() {
     await until(async () => (await evaluate("document.readyState === 'complete' && !!document.querySelector('#prompt')")) === true, 'fixture DOM readiness');
     const original = await evaluate("document.querySelector('#prompt').textContent");
     bridge = new ComposerBridge({ port, targetFilter: t => t.type === 'page' && t.url.includes('codex-quota-fixture.html') });
+    let settingsOpened = 0; bridge.on('settings', () => settingsOpened++);
     const state = { demo: true, settings: { language: 'zh' }, quota: { fetchedAt: Date.now(), short: { remaining: 86, resetsAt: Date.now() + 12000000 }, weekly: { remaining: 26, resetsAt: Date.now() + 170000000 } } };
     bridge.update(state); bridge.start();
     await until(() => bridge.status.visible === 1, 'CDP widget injection');
     assert.equal(bridge.status.targets, 1); checks.push('only the intended workspace target receives the strip');
     const values = await evaluate("[...document.querySelector('#codex-quota-composer-v1').shadowRoot.querySelectorAll('.value')].map(n=>n.textContent)");
     assert.deepEqual(values, ['86%', '26%']); checks.push('real CDP evaluates the owned widget and displays live payload');
+    await evaluate("window.__codexQuotaOpenSettingsV1('arbitrary-command')"); await pause(100);
+    assert.equal(settingsOpened, 0);
+    await evaluate("document.querySelector('#codex-quota-composer-v1').shadowRoot.querySelector('.settings').click()");
+    await until(() => settingsOpened === 1, 'settings button binding');
+    checks.push('settings button reaches the companion through a single whitelisted action');
     const layout = await evaluate("(()=>{const strip=document.querySelector('#codex-quota-composer-v1').getBoundingClientRect(),anchor=document.querySelector('[data-codex-intelligence-trigger]').getBoundingClientRect(),left=document.querySelector('#permissions').getBoundingClientRect();return {left:strip.left,right:strip.right,modelLeft:anchor.left,permissionRight:left.right}})()");
     assert(layout.right < layout.modelLeft); assert(layout.left > layout.permissionRight); checks.push('strip fits in empty space left of model picker without covering controls');
     assert.equal(await evaluate("document.querySelector('#prompt').textContent"), original);
@@ -59,6 +65,11 @@ async function main() {
     await evaluate("(()=>{const f=document.querySelector('.footer');const next=f.cloneNode(true);next.style.transform='translateY(8px)';f.replaceWith(next)})()");
     await until(async () => (await evaluate('window.__codexQuotaComposerV1.status().bounds.y')) === previousY + 8, 'footer rerender');
     assert.equal(await evaluate("document.querySelector('#prompt').textContent"), original); checks.push('composer rerender reanchors the strip without editing the prompt');
+    await inspector.call('Emulation.setDeviceMetricsOverride', { width: 600, height: 370, deviceScaleFactor: 1, mobile: false });
+    await until(async () => (await evaluate("document.querySelector('#codex-quota-composer-v1').shadowRoot.querySelector('.strip').classList.contains('settings-only') && window.__codexQuotaComposerV1.status().visible")) === true, 'settings-only fallback');
+    await evaluate("document.querySelector('#codex-quota-composer-v1').shadowRoot.querySelector('.settings').click()");
+    await until(() => settingsOpened === 2, 'settings-only button binding');
+    checks.push('narrow composer retains a usable settings-only button');
     await inspector.call('Emulation.setDeviceMetricsOverride', { width: 480, height: 370, deviceScaleFactor: 1, mobile: false });
     await until(async () => (await evaluate('window.__codexQuotaComposerV1.status().reason')) === 'insufficient-space', 'narrow window fallback');
     checks.push('narrow windows hide the strip instead of overlapping native controls');
@@ -67,6 +78,10 @@ async function main() {
     await inspector.call('Page.reload');
     await until(async () => (await evaluate('window.__codexQuotaComposerV1?.status().visible')) === true, 'page reload');
     assert.equal(await evaluate("document.querySelectorAll('#codex-quota-composer-v1').length"), 1); checks.push('page reload restores a single widget');
+    await pause(600); // Keep this independent click outside the spam guard.
+    assert.equal(await evaluate('typeof window.__codexQuotaOpenSettingsV1'), 'function');
+    await evaluate("document.querySelector('#codex-quota-composer-v1').shadowRoot.querySelector('.settings').click()");
+    await until(() => settingsOpened === 3, 'settings binding after reload');
     state.error = 'CONNECTION_FAILED'; bridge.update(state);
     await until(async () => (await evaluate("document.querySelector('#codex-quota-composer-v1')?.shadowRoot.querySelector('.strip').classList.contains('stale')")) === true, 'stale flag');
     checks.push('failed quota refresh is visibly marked as cached data');

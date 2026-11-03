@@ -14,7 +14,8 @@ function findFreeBounds(bar, occupied, width = 178, height = 32, preferred) {
   for (const [a, b] of blocks) { if (a - start >= width) spaces.push([start, a - width]); start = Math.max(start, b); }
   if (right - start >= width) spaces.push([start, right - width]);
   if (!spaces.length) return null;
-  const desired = Number.isFinite(preferred) ? preferred : right - width;
+  // Prefer a gap near the app buttons, away from notification-area utilities.
+  const desired = Number.isFinite(preferred) ? preferred : left;
   const candidates = spaces.map(([a, b]) => Math.max(a, Math.min(b, desired)));
   const x = candidates.sort((a, b) => Math.abs(a - desired) - Math.abs(b - desired))[0];
   return { x: Math.round(x), y: Math.round(bar.y + (bar.height - Math.min(height, bar.height - 4)) / 2), width, height: Math.min(height, bar.height - 4) };
@@ -30,7 +31,7 @@ class TaskbarWatcher extends EventEmitter {
     this.wanted = true;
     if (this.child) return;
     const script = path.join(__dirname, 'read-windows-taskbar.ps1').replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2');
-    this.child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    this.child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-ExcludeProcessId', String(process.pid)], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
     let buffer = '';
     this.child.stdout.setEncoding('utf8');
     this.child.stdout.on('data', chunk => {

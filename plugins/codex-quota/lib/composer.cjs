@@ -5,6 +5,7 @@ const path = require('node:path');
 const { EventEmitter } = require('node:events');
 
 const DEFAULT_PORT = 9339;
+const SETTINGS_BINDING = '__codexQuotaOpenSettingsV1';
 function validPort(value) { return Number.isInteger(value) && value >= 1024 && value <= 65535; }
 function isWorkspaceTarget(target) {
   if (target?.type !== 'page' || typeof target.url !== 'string') return false;
@@ -34,8 +35,9 @@ function listTargets(port) {
   });
 }
 
-class CdpConnection {
+class CdpConnection extends EventEmitter {
   constructor(url, port) {
+    super();
     if (!validSocket(url, port)) throw new Error('INVALID_CDP_SOCKET');
     this.url = url; this.seq = 0; this.pending = new Map(); this.socket = null;
   }
@@ -48,6 +50,7 @@ class CdpConnection {
     });
     socket.addEventListener('message', event => {
       let message; try { message = JSON.parse(event.data); } catch { return; }
+      if (message.method === 'Runtime.bindingCalled') { this.emit('binding', message.params); return; }
       const task = this.pending.get(message.id); if (!task) return;
       clearTimeout(task.timer); this.pending.delete(message.id);
       message.error ? task.reject(new Error('CDP_REQUEST_FAILED')) : task.resolve(message.result);
@@ -94,6 +97,7 @@ class ComposerBridge extends EventEmitter {
     try {
       if (session.scriptId) await session.connection.call('Page.removeScriptToEvaluateOnNewDocument', { identifier: session.scriptId });
       await session.connection.call('Runtime.evaluate', { expression: 'window.__codexQuotaComposerV1?.remove()', returnByValue: true });
+      await session.connection.call('Runtime.removeBinding', { name: SETTINGS_BINDING });
     } catch {} finally { session.connection.close(); }
   }
   async tick() {
@@ -113,6 +117,13 @@ class ComposerBridge extends EventEmitter {
             const connection = new CdpConnection(target.webSocketDebuggerUrl, this.port);
             session = { connection, scriptId: null }; this.sessions.set(target.id, session);
             await connection.open();
+            connection.on('binding', event => {
+              if (!this.enabled || this.sessions.get(target.id) !== session || event?.name !== SETTINGS_BINDING || event.payload !== 'open-settings') return;
+              if (Date.now() - (this.lastSettingsAt || 0) < 500) return;
+              this.lastSettingsAt = Date.now(); this.emit('settings');
+            });
+            await connection.call('Runtime.enable');
+            await connection.call('Runtime.addBinding', { name: SETTINGS_BINDING });
             const script = await connection.call('Page.addScriptToEvaluateOnNewDocument', { source: this.source });
             session.scriptId = script.identifier;
             await connection.call('Runtime.evaluate', { expression: this.source, returnByValue: true });
@@ -143,4 +154,4 @@ class ComposerBridge extends EventEmitter {
     this.report({ phase: 'disabled', targets: 0, visible: 0, reasons: [] });
   }
 }
-module.exports = { DEFAULT_PORT, validPort, isWorkspaceTarget, validSocket, listTargets, displayPayload, CdpConnection, ComposerBridge };
+module.exports = { DEFAULT_PORT, SETTINGS_BINDING, validPort, isWorkspaceTarget, validSocket, listTargets, displayPayload, CdpConnection, ComposerBridge };

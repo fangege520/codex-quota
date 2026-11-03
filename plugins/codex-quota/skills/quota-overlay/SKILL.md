@@ -37,6 +37,8 @@ Inspect `node scripts/manage.cjs composer-status`. `waiting` means the installed
 
 `connected` with `visible: 0` can mean there is no visible composer, insufficient room, or a client layout change. Do not claim actual integration merely because the CDP socket opened. `visible` from the widget is needed; an isolated fixture proves the mechanism but not a specific installed client version.
 
+The composer's gear button opens quota configuration even when the floating panel and taskbar strip are hidden. Narrow layouts retain the gear alone when at least 28 px is available. The button uses only a fixed CDP `open-settings` binding, with no arbitrary commands or extra network listener. If the user reports taskbar overlap, include non-interactive weather/battery HWNDs and legacy task-button accessibility geometry when diagnosing; a narrow stacked strip is expected where the wide ring style cannot fit safely.
+
 Disable with `node scripts/manage.cjs composer-off` or the tray checkbox. This removes the widget and registered reload scripts. The debugging port belongs to Codex and remains until that Codex process exits. To close it, fully quit Codex and launch normally. If the companion crashes, the widget hides itself when its short heartbeat lease expires.
 
 ## Remove
