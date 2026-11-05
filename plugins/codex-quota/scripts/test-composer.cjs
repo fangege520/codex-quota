@@ -69,8 +69,15 @@ async function main() {
     assert.equal(await evaluate("document.querySelector('#prompt').textContent"), original);
     await evaluate("document.querySelector('#send').click()"); assert.equal(await evaluate('window.sentCount'), 1);
     checks.push('editor content and native send action remain functional');
-    const screenshot = await inspector.call('Page.captureScreenshot', { format: 'png' });
-    fs.writeFileSync(path.join(out, 'composer-preview.png'), Buffer.from(screenshot.data, 'base64'));
+    // Hidden Windows CI windows may not deliver a compositor frame. The
+    // preview is optional; the geometry, interaction and reload checks are not.
+    try {
+      const screenshot = await inspector.call('Page.captureScreenshot', { format: 'png' });
+      fs.writeFileSync(path.join(out, 'composer-preview.png'), Buffer.from(screenshot.data, 'base64'));
+    } catch (error) {
+      if (error.message !== 'CDP_TIMEOUT') throw error;
+      console.warn('Fixture preview frame timed out; continuing functional checks.');
+    }
     // A second install and repeated heartbeats must not create duplicate widgets.
     state.quota.short.remaining = 71; state.quota.weekly.remaining = 0; bridge.update(state);
     await until(async () => (await evaluate("document.querySelector('#codex-quota-composer-v1')?.shadowRoot.querySelector('.weekly').textContent")) === '0%', 'quota refresh');
@@ -114,4 +121,4 @@ async function main() {
     if (child.exitCode == null) child.kill();
   }
 }
-main().catch(error => { fs.writeFileSync(path.join(out, 'failure.txt'), error.stack); console.error(error.message); process.exitCode = 1; });
+main().catch(error => { fs.writeFileSync(path.join(out, 'failure.txt'), error.stack); console.error(error.stack); process.exitCode = 1; });
