@@ -29,17 +29,15 @@ The system bar is enabled by default. Windows shows remaining quotas in a separa
 - Network errors keep the last successful reading with an explicit cached-data warning. Missing quota is shown as unavailable, never as 100%. Do not infer new allowance when a reset timestamp passes.
 - Windows and macOS are supported in source and packaging; a platform must pass its own checks before claiming it was tested.
 
-## Experimental in-composer strip
+## Sidebar, launcher and settings
 
-For a request to display quota beside the model selector, run `node scripts/manage.cjs composer-on`. This enables a companion that connects only to the local CDP port 9339 and adds a separate Shadow DOM widget. The companion passes only quota display values to the page, not credentials or conversation contents. It does not modify the app bundle or native editor nodes.
+Use `node scripts/manage.cjs settings` to open centered configuration. On Windows, `create-launcher` creates the Codex with Quota desktop and Start menu shortcuts. After fully quitting ordinary Codex, use this entry; on macOS use the tray launch command or `launch-codex`. This launches both the companion and Codex with a local CDP connection. The stock app icon does not enable the connection. Do not force-quit Codex.
 
-Inspect `node scripts/manage.cjs composer-status`. `waiting` means the installed desktop app lacks a debugging connection. Finish active Codex tasks and fully quit the desktop app; keep the companion running, then use its tray menu **Launch Codex (composer mode)**, or run `node scripts/manage.cjs launch-codex` from an external terminal. The launcher refuses to close or force-quit an existing Codex process. `CODEX_QUOTA_APP_PATH` can provide a nonstandard desktop executable or macOS `.app` path.
+Inspect `composer-status`: `sidebarVisible` is separate from the optional composer strip. Only claim native sidebar visibility when it is confirmed in the actual client. Fixture checks do not prove attachment to an already-running ordinary instance.
 
-`connected` with `visible: 0` can mean there is no visible composer, insufficient room, or a client layout change. Do not claim actual integration merely because the CDP socket opened. `visible` from the widget is needed; an isolated fixture proves the mechanism but not a specific installed client version.
+The rail shows both allowances, plan, credit balance and saved resets with hover details. The fixed official links navigate only; purchases and redemption remain manual. Per-chat hover shows locally recorded tokens or a labeled read-only account estimate if available. Charts summarize local token events in the system time zone. No credentials or conversation contents are sent to the widgets.
 
-The composer's gear button opens quota configuration even when the floating panel and taskbar strip are hidden. Narrow layouts retain the gear alone when at least 28 px is available. The button uses only a fixed CDP `open-settings` binding, with no arbitrary commands or extra network listener. If the user reports taskbar overlap, include non-interactive weather/battery HWNDs and legacy task-button accessibility geometry when diagnosing; a narrow stacked strip is expected where the wide ring style cannot fit safely.
-
-Disable with `node scripts/manage.cjs composer-off` or the tray checkbox. This removes the widget and registered reload scripts. The debugging port belongs to Codex and remains until that Codex process exits. To close it, fully quit Codex and launch normally. If the companion crashes, the widget hides itself when its short heartbeat lease expires.
+The gear is on the rail, not in the composer. Settings has display switches for composer, system bar and floating panel. `composer-off` only hides the optional strip; the left rail remains. When rail space is insufficient, use tray settings. Stopping the companion removes its widgets; fully quit Codex and launch normally to close the debugging port.
 
 ## Remove
 

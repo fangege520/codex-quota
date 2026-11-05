@@ -1,7 +1,9 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><title>Codex Quota · Composer integration fixture</title><style>
 *{box-sizing:border-box}body{margin:0;background:#fbfcfb;font:16px system-ui,-apple-system,"Segoe UI",sans-serif;color:#252b27;padding:34px}h1{font-size:15px;font-weight:500;color:#748076;margin:0 0 22px}.composer{border:1px solid #e4e8e4;background:#fff;border-radius:26px;box-shadow:0 2px 12px #00000004;padding:20px;max-width:1320px;margin:auto}.editor{height:75px;outline:none;padding:3px;font-size:20px}.footer{display:flex;align-items:center;height:42px;gap:10px;white-space:nowrap}.spacer{flex:1;min-width:0}button{font:15px system-ui;border:0;background:transparent;border-radius:20px;height:36px;flex-shrink:0;padding:0 10px}.permission{color:#ed7313}.model{background:#f1f3f2;color:#343a36;padding:0 13px}.send{border-radius:50%;width:36px;padding:0;background:#3e82f7;color:white;font-size:22px}.upload{font-size:26px;padding:0 5px}.mic{font-size:21px;padding:0 6px}.footnote{font-size:12px;color:#7c887f;margin:18px 8px}
+body{padding-left:70px}.demo-rail{position:fixed;left:0;top:0;bottom:0;width:53px;border-right:1px solid #dce6df;background:#f4f8f5;display:flex;align-items:center;flex-direction:column;padding:6px 0}.demo-rail button:last-child{margin-top:auto}.demo-thread{margin:12px 34px 0 0;border:1px solid #e2e8e3;border-radius:8px;width:180px;padding:7px 10px;font-size:12px}
 </style></head><body>
+<nav class="demo-rail" data-app-navigation-rail aria-label="模拟导航栏"><button id="native-home" type="button">主</button><button id="native-profile" data-orbit-profile-trigger type="button">我</button></nav>
 <h1>输入框额度条 · 布局测试（演示额度）</h1>
 <section class="composer">
  <div id="prompt" class="editor" contenteditable="true" data-lexical-editor="true">输入内容保持原样，发送控件继续正常工作。</div>
@@ -11,6 +13,6 @@
   <button class="model" data-codex-intelligence-trigger="true" data-composer-navigation-target="reasoning">GPT-6.1 Sol 高 ⌄</button>
   <button class="mic" aria-label="Dictation">♩</button><button class="send" id="send" aria-label="Send">↑</button>
  </div>
-</section><div class="footnote">这是独立测试窗口，不是当前 Codex 的实机截图。</div>
+</section><div class="demo-thread" data-app-action-sidebar-thread-id="local:00000000-0000-4000-8000-000000000001">模拟会话 · 悬停看 Token</div><div class="footnote">这是独立测试窗口，不是当前 Codex 的实机截图。</div>
 <script>window.sentCount=0;document.querySelector('#send').addEventListener('click',()=>window.sentCount++);</script>
 </body></html>

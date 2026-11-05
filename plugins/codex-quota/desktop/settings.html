@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; connect-src 'none'; base-uri 'none'"><title>Codex Quota · Settings</title><link rel="stylesheet" href="settings.css"><script defer src="settings.js"></script></head>
+<body>
+  <header class="titlebar"><div class="brand"><span class="mark">◔</span><div><h1 id="title">用量助手</h1><div class="sub">CODEX QUOTA</div></div></div><button id="close" class="icon" aria-label="关闭">×</button></header>
+  <main>
+    <div class="topline"><span id="account-title">当前额度</span><span id="plan" class="pill">—</span><button class="link" id="official">官方用量详情 ↗</button></div>
+    <div id="summary" class="summary"></div>
+    <section class="card activity">
+      <div class="section-head"><div><h2 id="activity-title">Token 用量</h2><p id="activity-source">本机 Codex 记录 · 按系统时区汇总</p></div><div id="periods" class="segments" role="group" aria-label="统计范围"><button data-period="today" aria-pressed="true">今日</button><button data-period="week" aria-pressed="false">这周</button><button data-period="month" aria-pressed="false">本月</button></div></div>
+      <div class="chart-heading"><strong id="total">—</strong><span id="hover-value"></span></div>
+      <div id="chart" class="chart" aria-label="Token 柱状图"></div>
+    </section>
+    <section class="card displays">
+      <div class="section-head"><h2 id="display-title">显示设置</h2><select id="theme" aria-label="外观"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></div>
+      <div id="switches" class="switches">
+        <div class="switch-row"><span id="label-composer">编辑框额度</span><button class="switch" data-setting="composer" role="switch" aria-labelledby="label-composer" aria-checked="false"></button></div>
+        <div class="switch-row"><span id="label-bar">任务栏额度</span><button class="switch" data-setting="bar" role="switch" aria-labelledby="label-bar" aria-checked="false"></button></div>
+        <div class="switch-row"><span id="label-floating">桌面悬浮框</span><button class="switch" data-setting="floating" role="switch" aria-labelledby="label-floating" aria-checked="false"></button></div>
+      </div>
+    </section>
+    <footer><span id="connection">等待连接 Codex</span><button class="link" id="launch">启动 Codex（用量助手）</button></footer>
+  </main>
+</body>
+</html>

@@ -3,9 +3,10 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
+const { THREAD_ID } = require('./usage.cjs');
 
 const DEFAULT_PORT = 9339;
-const SETTINGS_BINDING = '__codexQuotaOpenSettingsV1';
+const ACTION_BINDING = '__codexQuotaActionV2';
 function validPort(value) { return Number.isInteger(value) && value >= 1024 && value <= 65535; }
 function isWorkspaceTarget(target) {
   if (target?.type !== 'page' || typeof target.url !== 'string') return false;
@@ -81,23 +82,50 @@ function displayPayload(state) {
     error: !!state.error, language: state.settings?.language === 'en' ? 'en' : 'zh', demo: !!state.demo };
 }
 
+function displayRailPayload(state) {
+  const q = state.quota, raw = q?.resets;
+  return {
+    ...displayPayload(state),
+    credits: q?.credits ? { balance: typeof q.credits.balance === 'string' && /^-?\d+(?:\.\d+)?$/.test(q.credits.balance) ? q.credits.balance.slice(0,32) : null, unlimited: q.credits.unlimited === true } : null,
+    resets: Number.isSafeInteger(raw?.count) && raw.count >= 0 ? { count: raw.count, cards: (Array.isArray(raw.cards) ? raw.cards : []).slice(0,100).map(card => ({ expiresAt: Number.isFinite(card?.expiresAt) ? card.expiresAt : null })) } : null,
+    plan: typeof q?.plan === 'string' ? q.plan.slice(0,32) : null
+  };
+}
+
 class ComposerBridge extends EventEmitter {
-  constructor({ port = DEFAULT_PORT, targetFilter = isWorkspaceTarget, source } = {}) {
+  constructor({ port = DEFAULT_PORT, targetFilter = isWorkspaceTarget, source, threadUsage } = {}) {
     super(); if (!validPort(port)) throw new Error('INVALID_CDP_PORT');
-    this.port = port; this.filter = targetFilter; this.source = source || fs.readFileSync(path.join(__dirname, '..', 'desktop', 'composer-widget.js'), 'utf8');
+    this.port = port; this.filter = targetFilter;
+    this.source = source || ['rail-widget.js', 'composer-widget.js'].map(file => fs.readFileSync(path.join(__dirname, '..', 'desktop', file), 'utf8')).join('\n');
+    this.threadUsage = threadUsage;
     this.sessions = new Map(); this.enabled = false; this.busy = false; this.timer = null; this.payload = displayPayload({});
     this.status = { phase: 'disabled', targets: 0, visible: 0, reasons: [] };
   }
-  update(state) { this.payload = displayPayload(state); }
+  update(state) {
+    this.payload = displayPayload(state);
+    this.railPayload = displayRailPayload(state);
+    this.showComposer = state.settings?.composerEnabled !== false;
+  }
   report(status) { this.status = status; this.emit('status', status); }
   start() { if (this.enabled) return; this.enabled = true; this.tick(); }
+  async focus() {
+    let connection;
+    try {
+      const target = (await listTargets(this.port)).find(target => this.filter(target) && validSocket(target.webSocketDebuggerUrl, this.port));
+      if (!target) return false;
+      connection = new CdpConnection(target.webSocketDebuggerUrl, this.port);
+      await connection.open();
+      await connection.call('Page.bringToFront');
+      return true;
+    } catch { return false; } finally { connection?.close(); }
+  }
   async detach(id) {
     const session = this.sessions.get(id); if (!session) return;
     this.sessions.delete(id);
     try {
       if (session.scriptId) await session.connection.call('Page.removeScriptToEvaluateOnNewDocument', { identifier: session.scriptId });
-      await session.connection.call('Runtime.evaluate', { expression: 'window.__codexQuotaComposerV1?.remove()', returnByValue: true });
-      await session.connection.call('Runtime.removeBinding', { name: SETTINGS_BINDING });
+      await session.connection.call('Runtime.evaluate', { expression: 'window.__codexQuotaComposerV1?.remove();window.__codexQuotaRailV1?.remove()', returnByValue: true });
+      await session.connection.call('Runtime.removeBinding', { name: ACTION_BINDING });
     } catch {} finally { session.connection.close(); }
   }
   async tick() {
@@ -108,7 +136,7 @@ class ComposerBridge extends EventEmitter {
       if (!this.enabled) return;
       const ids = new Set(targets.map(target => target.id));
       for (const id of this.sessions.keys()) if (!ids.has(id)) await this.detach(id);
-      let visible = 0; const reasons = [];
+      let visible = 0, sidebarVisible = 0; const reasons = [];
       for (const target of targets) {
         if (!this.enabled) break;
         try {
@@ -117,27 +145,39 @@ class ComposerBridge extends EventEmitter {
             const connection = new CdpConnection(target.webSocketDebuggerUrl, this.port);
             session = { connection, scriptId: null }; this.sessions.set(target.id, session);
             await connection.open();
-            connection.on('binding', event => {
-              if (!this.enabled || this.sessions.get(target.id) !== session || event?.name !== SETTINGS_BINDING || event.payload !== 'open-settings') return;
-              if (Date.now() - (this.lastSettingsAt || 0) < 500) return;
-              this.lastSettingsAt = Date.now(); this.emit('settings');
+            connection.on('binding', async event => {
+              if (!this.enabled || this.sessions.get(target.id) !== session || event?.name !== ACTION_BINDING || typeof event.payload !== 'string') return;
+              if (event.payload === 'settings' || event.payload === 'official') {
+                if (Date.now() - (this.lastActionAt || 0) < 500) return;
+                this.lastActionAt = Date.now(); this.emit(event.payload); return;
+              }
+              const id = event.payload.startsWith('thread:') ? event.payload.slice(7) : '';
+              if (!THREAD_ID.test(id) || !this.threadUsage || Date.now() - (session.lastThreadAt || 0) < 150) return;
+              session.lastThreadAt = Date.now();
+              try {
+                const result = await this.threadUsage(id);
+                if (!this.enabled || this.sessions.get(target.id) !== session) return;
+                const usage = result ? { ...Object.fromEntries(['total','input','cached','output','reasoning'].map(k => [k, Number.isSafeInteger(result[k]) && result[k] >= 0 ? result[k] : null])), estimated: result.estimated === true } : null;
+                await connection.call('Runtime.evaluate', { expression: 'window.__codexQuotaRailV1?.setThreadUsage(' + JSON.stringify(id) + ',' + JSON.stringify(usage) + ')', returnByValue: true });
+              } catch {}
             });
             await connection.call('Runtime.enable');
-            await connection.call('Runtime.addBinding', { name: SETTINGS_BINDING });
+            await connection.call('Runtime.addBinding', { name: ACTION_BINDING });
             const script = await connection.call('Page.addScriptToEvaluateOnNewDocument', { source: this.source });
             session.scriptId = script.identifier;
             await connection.call('Runtime.evaluate', { expression: this.source, returnByValue: true });
           }
           const result = await session.connection.call('Runtime.evaluate', {
-            expression: `${this.source}\n;window.__codexQuotaComposerV1?.update(${JSON.stringify(this.payload)});window.__codexQuotaComposerV1?.status()`, returnByValue: true
+            expression: `${this.source}\n;window.__codexQuotaComposerV1?.update(${JSON.stringify(this.payload)},${this.showComposer !== false});window.__codexQuotaRailV1?.update(${JSON.stringify(this.railPayload || this.payload)});({composer:window.__codexQuotaComposerV1?.status(),rail:window.__codexQuotaRailV1?.status()})`, returnByValue: true
           });
           if (result.exceptionDetails) throw new Error('CDP_WIDGET_FAILED');
           const value = result.result?.value;
-          if (value?.visible) visible++;
-          if (typeof value?.reason === 'string') reasons.push(value.reason);
+          if (value?.composer?.visible) visible++;
+          if (value?.rail?.visible) sidebarVisible++;
+          if (typeof value?.composer?.reason === 'string') reasons.push(value.composer.reason);
         } catch { await this.detach(target.id); reasons.push('connection-failed'); }
       }
-      if (this.enabled) this.report({ phase: targets.length ? 'connected' : 'no-workspace', targets: targets.length, visible, reasons });
+      if (this.enabled) this.report({ phase: targets.length ? 'connected' : 'no-workspace', targets: targets.length, visible, sidebarVisible, reasons });
     } catch {
       for (const id of [...this.sessions.keys()]) await this.detach(id);
       if (this.enabled) this.report({ phase: 'waiting', targets: 0, visible: 0, reasons: ['debug-port-unavailable'] });
@@ -154,4 +194,4 @@ class ComposerBridge extends EventEmitter {
     this.report({ phase: 'disabled', targets: 0, visible: 0, reasons: [] });
   }
 }
-module.exports = { DEFAULT_PORT, SETTINGS_BINDING, validPort, isWorkspaceTarget, validSocket, listTargets, displayPayload, CdpConnection, ComposerBridge };
+module.exports = { DEFAULT_PORT, ACTION_BINDING, validPort, isWorkspaceTarget, validSocket, listTargets, displayPayload, displayRailPayload, CdpConnection, ComposerBridge };

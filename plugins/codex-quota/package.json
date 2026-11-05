@@ -1,6 +1,6 @@
 {
   "name": "codex-quota-overlay",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": true,
   "description": "Cross-platform Codex quota overlay",
   "license": "MIT",
@@ -11,7 +11,7 @@
   },
   "scripts": {
     "start": "electron .",
-    "test": "node --test tests/quota.test.cjs tests/transport.test.cjs tests/composer.test.cjs tests/desktop-app.test.cjs tests/runtime.test.cjs tests/system-bar.test.cjs",
+    "test": "node --test tests/quota.test.cjs tests/transport.test.cjs tests/composer.test.cjs tests/desktop-app.test.cjs tests/runtime.test.cjs tests/system-bar.test.cjs tests/usage.test.cjs",
     "check": "node scripts/manage.cjs check",
     "smoke": "node scripts/smoke.cjs",
     "test:composer": "node scripts/test-composer.cjs"

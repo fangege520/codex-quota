@@ -1,14 +1,14 @@
 param(
   [Parameter(Mandatory=$true)][string]$Executable,
   [Parameter(Mandatory=$true)][string]$Runtime,
-  [Parameter(Mandatory=$true)][ValidateSet('start','show','hide','toggle','stop','composer-on','composer-off','system-bar-on','system-bar-off','snapshot','launch-codex')][string]$Action
+  [Parameter(Mandatory=$true)][ValidateSet('start','show','hide','toggle','stop','composer-on','composer-off','system-bar-on','system-bar-off','snapshot','launch-codex','settings')][string]$Action
 )
 $ErrorActionPreference='Stop'
 $quotaTaskName='CodexQuotaLaunch-'+[Guid]::NewGuid().ToString('N')
 $quotaFolder=$null
 try {
   if(-not (Test-Path -LiteralPath $Executable) -or -not (Test-Path -LiteralPath (Join-Path $Runtime 'package.json'))) { throw 'RUNTIME_NOT_FOUND' }
-  $quotaFlags=@{start='';show='--show';hide='--hide';toggle='--toggle';stop='--quit';'composer-on'='--composer-on';'composer-off'='--composer-off';'system-bar-on'='--system-bar-on';'system-bar-off'='--system-bar-off';snapshot='--save-previews';'launch-codex'='--launch-codex'}
+  $quotaFlags=@{start='';show='--show';hide='--hide';toggle='--toggle';stop='--quit';'composer-on'='--composer-on';'composer-off'='--composer-off';'system-bar-on'='--system-bar-on';'system-bar-off'='--system-bar-off';snapshot='--save-previews';'launch-codex'='--launch-codex';settings='--settings'}
   # A detached Node child may still belong to Codex's Windows process job.
   # Start through the current user's scheduler so quitting Codex cannot kill it.
   # This is demand-only, has no triggers, and is removed immediately after launch.

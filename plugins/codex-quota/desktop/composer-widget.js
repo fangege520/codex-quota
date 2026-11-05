@@ -25,14 +25,9 @@
       .name{opacity:.62;font-size:10px}.value{text-align:right;font-weight:600;font-variant-numeric:tabular-nums}.track{height:2px;border-radius:2px;background:light-dark(#dce3dd,#ffffff15);grid-column:1/-1;overflow:hidden}.fill{height:100%;width:0;background:#56a66e;border-radius:2px}
       .dot{height:4px;width:4px;border-radius:50%;background:#62ab78;flex-shrink:0}.divider{height:12px;width:1px;background:light-dark(#dbe2dc,#ffffff20)}
       .stale .dot{background:#d5a464}.stale{opacity:.68}.mini .track{display:none}.mini{gap:5px;padding-inline:5px}.mini .window{grid-template-columns:auto auto;min-width:0;gap:3px}.mini .dot{display:none}
-      .settings{width:20px;height:20px;flex-shrink:0;padding:0;display:grid;place-items:center;border:0;border-radius:4px;color:inherit;background:transparent;font-size:15px;cursor:pointer}.settings:hover{background:light-dark(#173e3010,#ffffff18)}.settings:focus-visible{outline:2px solid #56a66e;outline-offset:1px}.settings-only{gap:0;padding:3px}.settings-only .window,.settings-only .divider,.settings-only .dot{display:none}
-    </style><div class="strip" role="group"><span class="dot"></span><div class="window"><span class="name">5h</span><span class="value short">—</span><div class="track"><div class="fill short-fill"></div></div></div><span class="divider"></span><div class="window"><span class="name">7d</span><span class="value weekly">—</span><div class="track"><div class="fill weekly-fill"></div></div></div><button class="settings" type="button" aria-label="额度设置" title="额度设置">⚙︎</button></div>`;
+    </style><div class="strip" role="group"><span class="dot"></span><div class="window"><span class="name">5h</span><span class="value short">—</span><div class="track"><div class="fill short-fill"></div></div></div><span class="divider"></span><div class="window"><span class="name">7d</span><span class="value weekly">—</span><div class="track"><div class="fill weekly-fill"></div></div></div></div>`;
     shortText = shadow.querySelector('.short'); weeklyText = shadow.querySelector('.weekly');
     shortBar = shadow.querySelector('.short-fill'); weeklyBar = shadow.querySelector('.weekly-fill'); dot = shadow.querySelector('.dot');
-    shadow.querySelector('.settings').addEventListener('click', event => {
-      event.preventDefault(); event.stopPropagation();
-      if (typeof window.__codexQuotaOpenSettingsV1 === 'function') window.__codexQuotaOpenSettingsV1('open-settings');
-    });
     // Add a separate owned node; never move React nodes or write into the editor.
     document.body.append(host);
   }
@@ -63,18 +58,14 @@
       if (r.right <= rect.left + 1 && r.bottom > rect.top && r.top < rect.bottom) leftEdge = Math.max(leftEdge, r.right + 8);
     }
     const available = rect.left - leftEdge - 8;
-    if (available < 28) { host.style.display = 'none'; reason = 'insufficient-space'; return; }
-    const settingsOnly = available < 132;
-    const mini = !settingsOnly && available < 184;
-    const width = settingsOnly ? 28 : mini ? 132 : 184;
+    if (available < 104) { host.style.display = 'none'; reason = 'insufficient-space'; return; }
+    const mini = available < 156;
+    const width = mini ? 104 : 156;
     const strip = shadow.querySelector('.strip');
     strip.classList.toggle('mini', mini);
-    strip.classList.toggle('settings-only', settingsOnly);
     const stale = !!payload.error || !Number.isFinite(payload.fetchedAt) || now() - payload.fetchedAt > 150000;
     strip.classList.toggle('stale', stale);
     const zh = payload.language !== 'en';
-    const settingsButton = shadow.querySelector('.settings');
-    settingsButton.title = zh ? '额度设置' : 'Quota settings'; settingsButton.setAttribute('aria-label', settingsButton.title);
     const details = [zh ? 'Codex 剩余额度' : 'Codex remaining quota'];
     for (const [data, text, bar, name] of [[payload.short, shortText, shortBar, '5h'], [payload.weekly, weeklyText, weeklyBar, '7d']]) {
       const percent = data && Number.isFinite(data.remaining) ? Math.max(0, Math.min(100, data.remaining)) : null;
@@ -101,7 +92,7 @@
   addEventListener('resize', schedule); addEventListener('scroll', schedule, true);
   const interval = setInterval(layout, 1000);
   window[key] = {
-    update(data) { payload = data; leaseUntil = now() + 12000; layout(); },
+    update(data, enabled = true) { payload = data; leaseUntil = enabled ? now() + 12000 : 0; layout(); },
     status() {
       const bounds = host?.getBoundingClientRect();
       return { mounted: !!host?.isConnected, visible: reason === 'visible', reason,

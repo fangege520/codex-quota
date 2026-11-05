@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, globalShortcut, screen, dialog, powerMonitor, nativeTheme } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, globalShortcut, screen, dialog, powerMonitor, nativeTheme, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -9,6 +9,10 @@ const { normalizeQuota, clampBounds } = require('../lib/quota.cjs');
 const { ComposerBridge, DEFAULT_PORT, validPort } = require('../lib/composer.cjs');
 const { discoverDesktopApp, launchDesktop } = require('../lib/desktop-app.cjs');
 const { findFreeBounds, popoverBounds, TaskbarWatcher } = require('../lib/system-bar.cjs');
+const { UsageIndex } = require('../lib/usage.cjs');
+const OFFICIAL_USAGE = 'https://chatgpt.com/settings/usage';
+const usage = new UsageIndex();
+const threadEstimates = new Map();
 const PANEL_WIDTH = 380, PANEL_HEIGHT = 324;
 if (process.platform === 'win32') app.commandLine.appendSwitch('force-renderer-accessibility');
 
@@ -29,19 +33,20 @@ const settings = {
   codexPath: typeof saved.codexPath === 'string' ? saved.codexPath : '',
   composerEnabled: saved.composerEnabled === true,
   composerPort: validPort(saved.composerPort) ? saved.composerPort : DEFAULT_PORT,
-  desktopAppPath: typeof saved.desktopAppPath === 'string' ? saved.desktopAppPath : '',
+  desktopAppPath: typeof saved.desktopAppPath === 'string' && fs.existsSync(saved.desktopAppPath) ? saved.desktopAppPath : '',
   systemBarEnabled: saved.systemBarEnabled !== false,
+  floatingEnabled: saved.floatingEnabled === true,
   theme: ['system', 'light', 'dark'].includes(saved.theme) ? saved.theme : 'system'
 };
 nativeTheme.themeSource = settings.theme;
 if (process.argv.includes('--system-bar-on')) settings.systemBarEnabled = true;
 if (process.argv.includes('--system-bar-off')) settings.systemBarEnabled = false;
-if (process.argv.includes('--composer-on') || process.argv.includes('--launch-codex')) settings.composerEnabled = true;
+if (process.argv.includes('--composer-on')) settings.composerEnabled = true;
 if (process.argv.includes('--composer-off')) settings.composerEnabled = false;
 let win, tray, client, timer, saveTimer, quitting = false, refreshing = false, failures = 0;
 let bridge, cleanupComplete = false, cleanupInFlight = false;
 let taskbarWatcher, popover = false, hoverOnly = false, popupCloseTimer;
-let activeSettingsMenu = null;
+let settingsWindow, launchingDesktop = false;
 const barWindows = new Map();
 const state = { quota: null, error: null, loading: true, settings, demo: smoke };
 const choose = (zh, en) => settings.language === 'zh' ? zh : en;
@@ -54,51 +59,66 @@ function persist() {
 }
 function snapshot() { const result = JSON.parse(JSON.stringify(state)); if (popover) result.settings.collapsed = false; return result; }
 function barSnapshot(item) { return { ...snapshot(), systemBarCompact: !!item.compact, systemBarTiny: !!item.tiny }; }
+function settingsSnapshot() {
+  return { language: settings.language, quota: state.quota, composer: settings.composerEnabled, bar: settings.systemBarEnabled, floating: settings.floatingEnabled, theme: settings.theme, sidebarVisible: state.composer?.sidebarVisible || 0, mac: process.platform === 'darwin' };
+}
 function publish() {
   state.systemDark = settings.theme === 'dark' || settings.theme === 'system' && (nativeTheme.shouldUseDarkColorsForSystemIntegratedUI ?? nativeTheme.shouldUseDarkColors);
   bridge?.update(state);
   if (win && !win.isDestroyed()) win.webContents.send('quota:changed', snapshot());
+  if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.webContents.send('quota:settings-changed', settingsSnapshot());
   for (const item of barWindows.values()) if (!item.win.isDestroyed()) item.win.webContents.send('quota:changed', barSnapshot(item));
   if (!smoke) {
     try {
       fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
-      fs.writeFileSync(path.join(path.dirname(settingsFile), 'runtime-status.json'), JSON.stringify({ pid: process.pid, windowVisible: !!win?.isVisible(), systemBar: { enabled: settings.systemBarEnabled, visible: process.platform === 'darwin' ? !!tray && settings.systemBarEnabled : [...barWindows.values()].filter(item => item.win.isVisible()).length, reason: state.systemBarReason || null }, composer: state.composer || { phase: 'disabled' }, updatedAt: Date.now() }));
+      fs.writeFileSync(path.join(path.dirname(settingsFile), 'runtime-status.json'), JSON.stringify({ pid: process.pid, windowVisible: !!win?.isVisible(), settingsVisible: !!settingsWindow?.isVisible(), systemBar: { enabled: settings.systemBarEnabled, visible: process.platform === 'darwin' ? !!tray && settings.systemBarEnabled : [...barWindows.values()].filter(item => item.win.isVisible()).length, reason: state.systemBarReason || null }, composer: state.composer || { phase: 'disabled' }, updatedAt: Date.now() }));
     } catch {}
   }
   updateTray();
 }
-async function setComposer(enabled) {
-  settings.composerEnabled = enabled;
-  if (enabled && !settings.desktopAppPath) {
-    try { settings.desktopAppPath = discoverDesktopApp(); } catch {}
-  }
-  persist();
-  if (enabled) {
-    if (!bridge) {
-      bridge = new ComposerBridge({ port: settings.composerPort });
-      bridge.on('status', status => { state.composer = status; publish(); });
-      bridge.on('settings', openSettings);
-    }
-    bridge.update(state); bridge.start();
-  } else await bridge?.stop();
-  publish();
+function startBridge() {
+  if (smoke || bridge) return;
+  bridge = new ComposerBridge({ port: settings.composerPort, threadUsage: readThreadUsage });
+  bridge.on('status', status => { state.composer = status; publish(); });
+  bridge.on('settings', () => openSettings().catch(() => {}));
+  bridge.on('official', openOfficialUsage);
+  bridge.update(state); bridge.start();
 }
+async function readThreadUsage(id) {
+  await usage.refresh();
+  const local = usage.get(id);
+  if (local) return local;
+  const cached = threadEstimates.get(id);
+  if (cached && Date.now() - cached.at < 60000) return cached.value;
+  let value = null;
+  try { if (client) value = await client.readThreadUsage(id); } catch {}
+  if (threadEstimates.size >= 200) threadEstimates.delete(threadEstimates.keys().next().value);
+  threadEstimates.set(id, { at: Date.now(), value }); return value;
+}
+function setComposer(enabled) { settings.composerEnabled = enabled; persist(); publish(); }
+function openOfficialUsage() { shell.openExternal(OFFICIAL_USAGE).catch(() => {}); }
 function composerStatusText() {
   const status = state.composer;
-  if (!settings.composerEnabled) return choose('输入框模式已关闭', 'Composer mode is off');
+  if (status?.sidebarVisible) return choose('左栏用量已连接', 'Sidebar quota connected');
   if (status?.visible) return choose(`已在 ${status.visible} 个窗口显示额度条`, `Quota strip visible in ${status.visible} window(s)`);
   if (status?.phase === 'connected') return choose('已连接，等待输入框或足够的显示空间', 'Connected; waiting for a composer with enough space');
   return choose(`等待本机调试连接（端口 ${settings.composerPort}）`, `Waiting for local debugging connection (port ${settings.composerPort})`);
 }
 async function launchCodex() {
+  if (launchingDesktop) return;
+  launchingDesktop = true;
   try {
-    await setComposer(true);
-    await launchDesktop({ executable: settings.desktopAppPath || undefined, port: settings.composerPort });
+    startBridge();
+    if (await bridge?.focus()) return;
+    // Re-resolve Store installs after every app update. A saved path is only
+    // used for a still-existing custom install.
+    const custom = settings.desktopAppPath && !/[\\/]WindowsApps[\\/]/i.test(settings.desktopAppPath) && fs.existsSync(settings.desktopAppPath) ? settings.desktopAppPath : undefined;
+    await launchDesktop({ executable: process.env.CODEX_QUOTA_APP_PATH || custom, port: settings.composerPort });
   } catch (error) {
     const restart = error.message === 'CODEX_RESTART_REQUIRED';
-    await dialog.showMessageBox(win, { type: 'info', title: 'Codex Quota', message: restart ? choose('请先完全退出 Codex，再启动输入框模式', 'Quit Codex completely before launching composer mode') : choose('未能启动 Codex', 'Could not launch Codex'),
-      detail: restart ? choose('当前 Codex 没有可用的调试连接。请等待任务结束并退出 Codex，额度助手保持运行；再从托盘菜单点击“启动 Codex（输入框模式）”。助手不会强制结束任务。', 'Wait for tasks to finish and quit Codex. Keep this helper running, then select Launch Codex (composer mode) from its tray menu. It never force-quits Codex.') : choose('请确认 Codex 已安装；可以设置 CODEX_QUOTA_APP_PATH 后重新启动额度助手。', 'Check that Codex is installed. You can set CODEX_QUOTA_APP_PATH and restart the helper.') });
-  }
+    await dialog.showMessageBox(settingsWindow || win, { type: 'info', title: 'Codex Quota', message: restart ? choose('当前 Codex 由普通图标启动', 'Codex was opened normally') : choose('未能启动 Codex', 'Could not launch Codex'),
+      detail: restart ? choose('请在任务完成后完全退出 Codex，再打开「Codex（用量助手）」快捷方式。之后使用该入口，左栏会自动连接。', 'Quit Codex after your tasks finish, then use the Codex with Quota shortcut. This shortcut connects the sidebar automatically.') : choose('请确认 Codex 已安装；可以设置 CODEX_QUOTA_APP_PATH 后重新启动额度助手。', 'Check that Codex is installed. You can set CODEX_QUOTA_APP_PATH and restart the helper.') });
+  } finally { launchingDesktop = false; }
 }
 function position() {
   const primary = screen.getPrimaryDisplay();
@@ -116,7 +136,8 @@ function collapse() {
   fitWindow(); persist(); publish();
 }
 function show() { popover = false; hoverOnly = false; clearTimeout(popupCloseTimer); win.setBounds(position()); win.setAlwaysOnTop(settings.topmost, 'floating'); win.setOpacity(settings.opacity); publish(); win.show(); publish(); if (process.platform === 'darwin') app.dock?.hide(); }
-function hide() { const menu = activeSettingsMenu; activeSettingsMenu = null; menu?.closePopup(win); clearTimeout(popupCloseTimer); win.hide(); popover = false; hoverOnly = false; publish(); }
+function hide() { clearTimeout(popupCloseTimer); popover = false; hoverOnly = false; win.hide(); publish(); }
+function setFloating(enabled) { settings.floatingEnabled = enabled; persist(); if (enabled) show(); else hide(); }
 function toggle() { win.isVisible() ? hide() : show(); }
 function quit() { quitting = true; app.quit(); }
 function openPopover(anchor, preview = false) {
@@ -129,17 +150,20 @@ function openPopover(anchor, preview = false) {
   publish();
 }
 function togglePopover(anchor) { if (win.isVisible() && popover && !hoverOnly) hide(); else openPopover(anchor); }
-function openSettings() {
-  if (activeSettingsMenu) return activeSettingsMenu;
-  const menu = Menu.buildFromTemplate(menuItems()); activeSettingsMenu = menu;
-  const cursor = screen.getCursorScreenPoint();
-  openPopover({ x: cursor.x, y: cursor.y, width: 1, height: 1 });
-  menu.popup({ window: win, callback: () => {
-    if (activeSettingsMenu !== menu) return;
-    activeSettingsMenu = null;
-    if (popover && !win.isFocused()) hide();
-  } });
-  return menu;
+async function openSettings() {
+  if (quitting) return;
+  const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+  const width = Math.min(740, area.width - 16), height = Math.min(580, area.height - 16);
+  const bounds = { width, height, x: Math.round(area.x + (area.width - width) / 2), y: Math.round(area.y + (area.height - height) / 2) };
+  if (!settingsWindow || settingsWindow.isDestroyed()) {
+    const window = new BrowserWindow({ ...bounds, show: false, frame: false, skipTaskbar: true, alwaysOnTop: true, fullscreenable: false, resizable: false, webPreferences: { preload: path.join(__dirname, 'settings-preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+    settingsWindow = window; secureContents(window);
+    window.on('closed', () => { if (settingsWindow === window) settingsWindow = null; if (!quitting) publish(); });
+    await window.loadFile(path.join(__dirname, 'settings.html'));
+  }
+  if (!settingsWindow || settingsWindow.isDestroyed()) return;
+  settingsWindow.setBounds(bounds); settingsWindow.showInactive(); settingsWindow.focus(); publish();
+  return settingsWindow;
 }
 function closePreviewLater() {
   clearTimeout(popupCloseTimer);
@@ -192,6 +216,7 @@ async function updateTaskbars(data) {
 }
 function setSystemBar(enabled) {
   settings.systemBarEnabled = enabled; persist();
+  if (smoke) { publish(); return; }
   if (process.platform === 'win32') {
     if (!enabled) { taskbarWatcher?.stop(); taskbarWatcher = null; for (const item of [...barWindows.values()]) item.win.destroy(); barWindows.clear(); }
     else if (!taskbarWatcher) {
@@ -239,6 +264,7 @@ async function refresh() {
 
 function menuItems() {
   return [
+    { label: choose('用量助手设置…', 'Quota settings…'), click: () => openSettings().catch(() => {}) },
     { label: choose('显示 / 隐藏', 'Show / hide'), click: toggle },
     { label: choose('立即刷新', 'Refresh now'), enabled: !refreshing && !smoke, click: refresh },
     { label: choose('折叠成小条', 'Compact mode'), type: 'checkbox', checked: settings.collapsed, click: collapse },
@@ -246,7 +272,7 @@ function menuItems() {
     { label: choose('外观', 'Appearance'), submenu: [['system', '跟随系统', 'System'], ['light', '浅色', 'Light'], ['dark', '深色', 'Dark']].map(([value, zh, en]) => ({ label: choose(zh, en), type: 'radio', checked: settings.theme === value, click: () => { settings.theme = value; nativeTheme.themeSource = value; persist(); publish(); } })) },
     { label: choose('输入框额度条（实验）', 'Composer quota strip (experimental)'), type: 'checkbox', checked: settings.composerEnabled, click: item => setComposer(item.checked) },
     { label: composerStatusText(), click: () => dialog.showMessageBox(win, { type: 'info', title: 'Codex Quota', message: composerStatusText(), detail: choose('通过本机 CDP 添加独立额度条；不会读取或修改输入内容。没有足够空间时自动隐藏。关闭实验模式即可移除。', 'Adds a separate strip through local CDP. It does not read or modify editor content. Hidden automatically when space is insufficient; disable this mode to remove it.') }) },
-    { label: choose('启动 Codex（输入框模式）', 'Launch Codex (composer mode)'), enabled: !smoke, click: launchCodex },
+    { label: choose('启动 Codex（用量助手）', 'Launch Codex with Quota'), enabled: !smoke, click: launchCodex },
     { label: choose('始终置顶', 'Always on top'), type: 'checkbox', checked: settings.topmost, click: item => {
       settings.topmost = item.checked; win.setAlwaysOnTop(item.checked, 'floating'); persist(); publish();
     } },
@@ -347,10 +373,22 @@ async function smokeTest() {
   assert.equal(popover, false);
   checks.push('clicking the taskbar quota again closes details');
   hide(); fixtureBar.destroy(); barWindows.delete('fixture');
-  const settingsMenu = openSettings(); await settle();
-  assert.equal(win.isVisible(), true); assert.equal(popover, true);
-  settingsMenu.closePopup(win); hide();
-  checks.push('settings entry restores configuration while the detail panel is hidden');
+  settings.language = 'zh'; publish();
+  const config = await openSettings(); await settle();
+  assert.equal(config.isVisible(), true, JSON.stringify({bounds:config.getBounds(), minimized:config.isMinimized()})); assert.equal(win.isVisible(), false);
+  const readConfig = code => config.webContents.executeJavaScript(code);
+  assert.equal(await readConfig("document.querySelectorAll('#chart .column').length"), 24);
+  await readConfig("document.querySelector('[data-period=week]').click()");
+  assert.equal(await readConfig("document.querySelectorAll('#chart .column').length"), 7);
+  await readConfig("document.querySelector('[data-period=month]').click()");
+  assert.equal(await readConfig("document.querySelectorAll('#chart .column').length"), 31);
+  await readConfig("document.querySelector('[data-setting=composer]').click()"); await settle();
+  assert.equal(settings.composerEnabled, true);
+  await readConfig("document.querySelector('[data-period=today]').click()"); await settle();
+  fs.writeFileSync(path.join(out, 'settings.png'), (await config.webContents.capturePage()).toPNG());
+  config.close();
+  settings.language = 'en'; publish();
+  checks.push('centered settings works independently of overlays, with period charts and saved switches');
   state.error = 'CONNECTION_FAILED'; publish(); await settle();
   assert.match(await evaluate("document.querySelector('#status-text').textContent"), /failed/i);
   checks.push('failed refresh explicitly marks cached data');
@@ -370,6 +408,7 @@ else {
     else if (argv.includes('--composer-on')) setComposer(true);
     else if (argv.includes('--composer-off')) setComposer(false);
     else if (argv.includes('--launch-codex')) launchCodex();
+    else if (argv.includes('--settings')) openSettings().catch(() => {});
     else if (argv.includes('--system-bar-on')) setSystemBar(true);
     else if (argv.includes('--system-bar-off')) setSystemBar(false);
     else if (argv.includes('--save-previews')) savePreviews().catch(() => {});
@@ -383,7 +422,8 @@ else {
     if (process.env.CODEX_QUOTA_APP_PATH) settings.desktopAppPath = process.env.CODEX_QUOTA_APP_PATH;
     if (smoke) {
       settings.language = 'zh'; settings.collapsed = false; settings.topmost = true;
-      state.quota = normalizeQuota({ rateLimits: { planType: 'plus', primary: { usedPercent: 36, windowDurationMins: 300, resetsAt: Math.floor(Date.now() / 1000) + 12000 }, secondary: { usedPercent: 72, windowDurationMins: 10080, resetsAt: Math.floor(Date.now() / 1000) + 172800 } } });
+      settings.composerEnabled = false; settings.systemBarEnabled = true; settings.floatingEnabled = false;
+      state.quota = normalizeQuota({ rateLimits: { planType: 'plus', credits:{balance:'120.5'}, primary: { usedPercent: 36, windowDurationMins: 300, resetsAt: Math.floor(Date.now() / 1000) + 12000 }, secondary: { usedPercent: 72, windowDurationMins: 10080, resetsAt: Math.floor(Date.now() / 1000) + 172800 } }, rateLimitResetCredits:{availableCount:2,credits:[]} });
       state.loading = false;
     }
     win = new BrowserWindow({
@@ -399,7 +439,7 @@ else {
     secureContents(win);
     win.on('close', event => { if (!quitting) { event.preventDefault(); hide(); } });
     win.on('blur', () => {
-      if (popover && !hoverOnly && !activeSettingsMenu && ![...barWindows.values()].some(item => item.win === BrowserWindow.getFocusedWindow())) hide();
+      if (popover && !hoverOnly && ![...barWindows.values()].some(item => item.win === BrowserWindow.getFocusedWindow())) hide();
     });
     win.on('moved', () => {
       if (popover) return;
@@ -409,6 +449,24 @@ else {
     screen.on('display-removed', () => { win.setBounds(position()); persist(); });
     screen.on('display-metrics-changed', () => { win.setBounds(position()); });
     ipcMain.handle('quota:state', event => { const item = [...barWindows.values()].find(item => item.win.webContents === event.sender); return item ? barSnapshot(item) : snapshot(); });
+    ipcMain.handle('quota:settings-state', event => event.sender === settingsWindow?.webContents ? settingsSnapshot() : null);
+    ipcMain.handle('quota:settings-usage', async event => {
+      if (event.sender !== settingsWindow?.webContents) return null;
+      if (smoke) return { sessions: 5, ...Object.fromEntries([['today',24],['week',7],['month',31]].map(([key,n]) => [key, Array.from({length:n},(_,i)=>({label:key==='today'?String(i).padStart(2,'0')+':00':String(i+1),tokens: i % 5 === 0 ? 0 : ((i*73+9)%105)*12000}))])) };
+      await usage.refresh(); return usage.chart();
+    });
+    ipcMain.on('quota:settings-action', (event, key, value) => {
+      if (event.sender !== settingsWindow?.webContents) return;
+      if (key === 'close') settingsWindow.close();
+      else if (key === 'official') openOfficialUsage();
+      else if (key === 'launch' && !smoke) launchCodex();
+      else if (key === 'theme' && ['system','light','dark'].includes(value)) { settings.theme = value; nativeTheme.themeSource = value; persist(); publish(); }
+      else if (typeof value === 'boolean') {
+        if (key === 'composer') setComposer(value);
+        else if (key === 'bar') setSystemBar(value);
+        else if (key === 'floating') setFloating(value);
+      }
+    });
     ipcMain.on('quota:action', (event, action) => {
       const barItem = [...barWindows.values()].find(item => item.win.webContents === event.sender);
       if (barItem) {
@@ -422,7 +480,7 @@ else {
       if (action === 'refresh') refresh();
       else if (action === 'collapse') collapse();
       else if (action === 'hide') hide();
-      else if (action === 'menu') Menu.buildFromTemplate(menuItems()).popup({ window: win });
+      else if (action === 'menu') openSettings().catch(() => {});
     });
     const trayIcon = nativeImage.createFromPath(path.join(__dirname, '..', 'assets', process.platform === 'darwin' ? 'trayTemplate.png' : 'icon.png')).resize({ width: process.platform === 'darwin' ? 18 : 24, height: process.platform === 'darwin' ? 18 : 24 });
     if (process.platform === 'darwin') trayIcon.setTemplateImage(true);
@@ -437,10 +495,11 @@ else {
     await win.loadFile(path.join(__dirname, 'index.html'));
     if (smoke) await smokeTest();
     else {
-      if (process.argv.includes('--show') || !process.argv.includes('--background') && !settings.systemBarEnabled) show();
+      if (process.argv.includes('--show') || settings.floatingEnabled) show();
       setSystemBar(settings.systemBarEnabled);
       refresh();
-      if (settings.composerEnabled) await setComposer(true);
+      startBridge();
+      if (process.argv.includes('--settings')) await openSettings();
       if (process.argv.includes('--launch-codex')) await launchCodex();
     }
   }).catch(error => {

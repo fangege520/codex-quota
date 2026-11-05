@@ -5,6 +5,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { spawn } = require('node:child_process');
 const { createInterface } = require('node:readline');
+const { THREAD_ID } = require('./usage.cjs');
 
 function executable(file) {
   try { fs.accessSync(file, process.platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK); return fs.statSync(file).isFile(); }
@@ -79,7 +80,7 @@ class CodexClient {
     };
     child.on('error', failed); child.on('exit', failed);
     try {
-      await this.rpc('initialize', { clientInfo: { name: 'codex_quota_overlay', title: 'Codex Quota', version: '0.3.1' } });
+      await this.rpc('initialize', { clientInfo: { name: 'codex_quota_overlay', title: 'Codex Quota', version: '0.4.0' } });
       this.send({ method: 'initialized' });
     } catch (error) { this.close(); throw error; }
   }
@@ -104,6 +105,18 @@ class CodexClient {
     const auth = await this.rpc('account/read', { refreshToken: false });
     if (!auth?.account || !['chatgpt', 'chatgptAuthTokens'].includes(auth.account.type)) throw new Error('CHATGPT_LOGIN_REQUIRED');
     return this.rpc('account/rateLimits/read');
+  }
+
+  async readThreadUsage(id) {
+    if (typeof id !== 'string' || !THREAD_ID.test(id)) return null;
+    await this.connect();
+    const result = await this.rpc('account/usage/read', { threadId: id });
+    const groups = result?.threadUsage?.groups;
+    if (!Array.isArray(groups) || !groups.length) return null;
+    const sum = key => groups.every(g => Number.isSafeInteger(g[key]) && g[key] >= 0) ? groups.reduce((n,g)=>n+g[key],0) : null;
+    const total = sum('totalTokens');
+    if (total === null) return null;
+    return { total, input: sum('inputTokens'), cached: sum('cachedInputTokens'), output: sum('outputTokens'), reasoning: null, estimated: true };
   }
 
   close() {
