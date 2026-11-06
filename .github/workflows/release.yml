@@ -108,8 +108,7 @@ jobs:
           status=$(node -p 'JSON.parse(require("node:fs").readFileSync(0, "utf8")).status' <<< "$result")
           echo "Apple disk image notarization status: $status"
           test "$status" = Accepted
-          xcrun stapler staple "$image"
-          xcrun stapler validate "$image"
+          bash "$GITHUB_WORKSPACE/.github/scripts/staple-macos.sh" "$image"
       - name: Verify the app copied from the macOS installer and create the ZIP
         run: |
           image="dist/Codex-Quota-$(node -p 'require("./package.json").version')-mac-${{ matrix.arch }}.dmg"
@@ -125,8 +124,7 @@ jobs:
           test -n "$icon"
           test -s "$bundle/Contents/Resources/${icon%.icns}.icns"
           codesign --verify --deep --strict --verbose=2 "$bundle"
-          xcrun stapler staple "$bundle"
-          xcrun stapler validate "$bundle"
+          bash "$GITHUB_WORKSPACE/.github/scripts/staple-macos.sh" "$bundle"
           spctl --assess --type execute --verbose=2 "$bundle"
           CODEX_QUOTA_SMOKE_EXECUTABLE="$bundle/Contents/MacOS/Codex Quota" npm run smoke
           ditto -c -k --keepParent "$bundle" "${image%.dmg}.zip"
