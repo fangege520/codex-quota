@@ -1,20 +1,20 @@
 # 安装 Codex Quota
 
-## 成品安装包
+## Windows 成品安装包
 
 - [Windows x64 · 下载 `.exe`](https://github.com/fangege520/codex-quota/releases/download/v0.4.4/Codex-Quota-0.4.4-win-x64.exe)
-- [Mac Apple 芯片 · 下载 `.dmg`](https://github.com/fangege520/codex-quota/releases/download/v0.4.4/Codex-Quota-0.4.4-mac-arm64.dmg)
-- [Mac Intel · 下载 `.dmg`](https://github.com/fangege520/codex-quota/releases/download/v0.4.4/Codex-Quota-0.4.4-mac-x64.dmg)
 
-安装前先退出正在运行的用量助手。Windows 运行下载的 `.exe`。Mac 打开 `.dmg` 后，将 **Codex Quota.app** 拖入「应用程序」，然后从 Finder 打开。安装后用已登录 ChatGPT 的 Codex 读取额度。
+安装前先退出正在运行的用量助手，再运行下载的 `.exe`。安装后用已登录 ChatGPT 的 Codex 读取额度。
 
 ## 复制给 Codex 执行
 
 ```text
-请读取 https://github.com/fangege520/codex-quota/blob/main/INSTALL.md，识别本机的系统和处理器架构，下载对应的 Codex Quota 成品安装包，安装并打开用量助手，验证 Windows 任务栏或 macOS 菜单栏能否显示额度。遇到系统确认、授权或登录时，请让我操作。
+请读取 https://github.com/fangege520/codex-quota/blob/main/INSTALL.md 并安装 Codex Quota。Windows x64 使用文档里的 .exe。macOS 请下载源码并在仓库根目录运行 node install.cjs。安装后打开用量助手，验证系统栏能否显示额度。遇到系统确认、授权或登录时，请让我操作。
 ```
 
 ## 源码安装
+
+Mac 暂时使用此方式。v0.4.4 的 `.dmg` 缺少发行签名和公证，macOS 可能提示应用已损坏。
 
 需要 Node.js 22.12 或更新版本、npm，以及支持 `codex plugin` 的 Codex CLI。可以优先使用 Codex 自带的现代 Node 运行时。
 
@@ -25,7 +25,7 @@
 ## 安装后使用
 
 - **Windows**从开始菜单打开 **Codex Quota**。源码安装使用 **Codex（用量助手）** 快捷方式。在任务栏或托盘查看额度。
-- **macOS**从 Finder 的「应用程序」打开 **Codex Quota.app**。源码安装在 `~/Applications` 中。在顶部菜单栏查看额度。
+- **macOS**在 Finder 按 `⌘⇧G`，进入 `~/Applications` 并打开 **Codex Quota.app**。在顶部菜单栏查看额度。
 
 要显示 Codex 左栏，等当前任务完成并正常退出 Codex，再从用量助手设置点击 **启动 Codex（用量助手）**。可在设置中开启编辑框额度或桌面悬浮框。
 
