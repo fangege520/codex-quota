@@ -1,6 +1,18 @@
 # 安装 Codex Quota
 
-支持 Windows 和 macOS（Apple Silicon 或 Intel）。需要 Node.js 22.12 或更新版本、npm，以及支持 `codex plugin` 的 Codex CLI。可以优先使用 Codex 自带的现代 Node 运行时。
+## 成品安装包
+
+在 [GitHub Releases](https://github.com/fangege520/codex-quota/releases) 下载对应安装包：
+
+- **Windows x64**选 `win-x64.exe`。
+- **Mac Apple 芯片**选 `mac-arm64.dmg`。
+- **Mac Intel**选 `mac-x64.dmg`。
+
+安装前先退出正在运行的用量助手。安装后打开 **Codex Quota**，用已登录 ChatGPT 的 Codex 读取额度。需要显示 Codex 左栏时，等任务结束并正常退出 Codex，再在用量助手设置里点 **启动 Codex（用量助手）**。
+
+## 源码安装
+
+需要 Node.js 22.12 或更新版本、npm，以及支持 `codex plugin` 的 Codex CLI。可以优先使用 Codex 自带的现代 Node 运行时。
 
 1. 下载或克隆仓库。已安装的用户请先从托盘或菜单栏退出用量助手。
 2. 在仓库根目录运行 `node install.cjs`。安装成功后会启动用量助手并检查额度。

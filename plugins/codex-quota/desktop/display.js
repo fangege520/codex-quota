@@ -64,6 +64,11 @@ const quotaDisplay = (() => {
     const value = Math.trunc(Number(balance));
     return Number.isFinite(value) ? value : null;
   }
+  function planLabel(plan) {
+    if (typeof plan !== 'string') return '';
+    if (plan.toLowerCase().replace(/[ _-]/g, '') === 'prolite') return 'Pro Lite';
+    return plan.replace(/^./, letter => letter.toUpperCase());
+  }
   const percent = value => Number.isFinite(value) ? Math.round(Math.max(0, Math.min(100, value))) : null;
   const tone = value => value == null ? 'light-dark(#67717b, #a8adb4)' : value <= 20 ? 'light-dark(#c23242, #f47c85)'
     : value <= 50 ? 'light-dark(#946400, #f1c75b)' : 'var(--display-main)';
@@ -79,7 +84,7 @@ const quotaDisplay = (() => {
     if (schemes.includes('dark') !== schemes.includes('light')) return schemes.includes('dark') ? 'dark' : 'light';
     return 'light dark';
   }
-  return { regions, sizes, colors, normalize, apply, full, compact, creditValue, percent, progressColors, colorScheme };
+  return { regions, sizes, colors, normalize, apply, full, compact, creditValue, planLabel, percent, progressColors, colorScheme };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = quotaDisplay;

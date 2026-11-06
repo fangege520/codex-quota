@@ -5,7 +5,7 @@
 ## 界面
 
 - **任务栏和菜单栏**显示剩余额度。Windows 在任务栏有空位时显示，macOS 在顶部菜单栏显示。
-- **Codex 左栏**显示额度、重置时间、点数和重置卡。把鼠标移到会话上可查看会话 Token；每轮用时旁可查看本轮 Token 和推理强度。
+- **Codex 左栏**显示额度、重置时间、点数、重置卡和套餐。把鼠标移到会话上可查看会话 Token；每轮用时旁可查看本轮 Token、模型和推理强度。
 - **用量助手设置**提供今日、本周、本月的 Token 图表，可分别开启左栏、编辑框额度、系统栏和桌面悬浮框。
 
 ![用量助手设置（演示数据）](docs/settings-preview.png)
@@ -23,7 +23,9 @@
 
 ## 安装
 
-在 Windows 或 macOS 的 Codex 桌面端发送这一句：
+优先从 [GitHub Releases](https://github.com/fangege520/codex-quota/releases) 下载成品。Windows x64 选 `.exe`，Mac 按 Apple 芯片或 Intel 选对应的 `.dmg`。安装完成后打开 **Codex Quota**，在助手设置中选择 **启动 Codex（用量助手）** 即可连接左栏。
+
+需要导入 Codex 插件时，在 Windows 或 macOS 的 Codex 桌面端发送这一句：
 
 ```text
 请下载 https://github.com/fangege520/codex-quota，读取 INSTALL.md，按当前系统安装并启动 Codex 用量助手，创建启动入口并验证额度显示。

@@ -132,20 +132,19 @@
       .mini b.long { font-size: min(calc(7px * var(--font-scale)), calc(7 * var(--u))); letter-spacing: -.2px; }
       .end {
         display: grid;
-        grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+        grid-template-columns: minmax(0, 1fr) max(14px, calc(14 * var(--u)));
         align-items: center;
         min-height: calc(16 * var(--u));
         border-radius: 999px;
         background: var(--tint);
       }
       .plan {
-        padding-inline: 1px;
-        overflow: hidden;
+        padding: 2px;
         color: var(--accent);
         font-size: calc(max(7px, 7 * var(--u)) * var(--font-scale));
         font-weight: 750;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        line-height: 1.05;
+        overflow-wrap: anywhere;
       }
       .gear {
         position: relative;
@@ -378,7 +377,7 @@
     resets.querySelector('span').textContent = t('重置','Reset'); resets.querySelector('b').textContent = number(data.resets?.count, 0);
     resets.title = full(data.resets?.count);
     credits.setAttribute('aria-label', t('Codex 点数详情','Codex credits')); resets.setAttribute('aria-label', t('重置卡详情','Saved resets'));
-    const plan = stack.querySelector('.plan'); plan.textContent = data.plan ? data.plan.replace(/^./, c => c.toUpperCase()) : '—'; plan.title = data.plan || '';
+    const plan = stack.querySelector('.plan'); plan.title = quotaDisplay.planLabel(data.plan); plan.textContent = plan.title || '—';
     const gear = stack.querySelector('.gear'); gear.title = t('用量助手设置','Quota settings'); gear.setAttribute('aria-label', gear.title);
   }
   function layoutTurns() {
@@ -397,7 +396,7 @@
       if (!duration.contains(hit)) continue;
       const result = turnValues.get(id);
       if (!result || now - result.at > 12000) request.push(id);
-      if (result?.total == null && !result?.effort) continue;
+      if (result?.total == null && !result?.effort && !result?.model) continue;
       let badge = turnBadges.get(id);
       if (!badge) {
         badge = element('span', 'turn-badge');
@@ -405,13 +404,18 @@
       }
       const tokens = result.total == null ? '' : number(result.total) + ' Token';
       const effort = result.effort ? t('推理 ' + (effortLabels.get(result.effort) || result.effort), 'Reasoning ' + result.effort) : '';
-      badge.textContent = [tokens, effort].filter(Boolean).join(' · ');
+      const labels = [tokens, result.model, effort].filter(Boolean);
+      badge.textContent = labels.join(' · ');
       badge.title = [tokens && t('本轮用量 · ', 'This turn · ') + full(result.total) + ' Token',
+        result.model && t('本轮模型 · ', 'Model · ') + result.model,
         effort && t('推理强度 · ', 'Reasoning effort · ') + result.effort].filter(Boolean).join('\n');
       badge.hidden = false;
       const left = Math.ceil(box.right + 8);
       const right = Math.min(line.right, innerWidth - 8);
-      if (tokens && effort && left + badge.offsetWidth > right) badge.textContent = tokens;
+      while (labels.length > 1 && left + badge.offsetWidth > right) {
+        labels.pop();
+        badge.textContent = labels.join(' · ');
+      }
       if (left + badge.offsetWidth > right) { badge.hidden = true; visible.add(id); continue; }
       badge.style.left = left + 'px';
       badge.style.top = Math.round(box.top + (box.height - badge.offsetHeight) / 2) + 'px';

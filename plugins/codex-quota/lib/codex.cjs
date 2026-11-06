@@ -6,6 +6,7 @@ const os = require('node:os');
 const { spawn } = require('node:child_process');
 const { createInterface } = require('node:readline');
 const { THREAD_ID } = require('./usage.cjs');
+const { version } = require('../package.json');
 
 function executable(file) {
   try { fs.accessSync(file, process.platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK); return fs.statSync(file).isFile(); }
@@ -80,7 +81,7 @@ class CodexClient {
     };
     child.on('error', failed); child.on('exit', failed);
     try {
-      await this.rpc('initialize', { clientInfo: { name: 'codex_quota_overlay', title: 'Codex Quota', version: '0.4.0' } });
+      await this.rpc('initialize', { clientInfo: { name: 'codex_quota_overlay', title: 'Codex Quota', version } });
       this.send({ method: 'initialized' });
     } catch (error) { this.close(); throw error; }
   }
@@ -104,7 +105,8 @@ class CodexClient {
     await this.connect();
     const auth = await this.rpc('account/read', { refreshToken: false });
     if (!auth?.account || !['chatgpt', 'chatgptAuthTokens'].includes(auth.account.type)) throw new Error('CHATGPT_LOGIN_REQUIRED');
-    return this.rpc('account/rateLimits/read');
+    const limits = await this.rpc('account/rateLimits/read');
+    return { ...limits, accountPlan: auth.account.planType };
   }
 
   async readThreadUsage(id) {

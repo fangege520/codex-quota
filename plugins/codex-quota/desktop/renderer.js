@@ -27,7 +27,7 @@ function paint(state) {
   text('live-tag', stale ? t('缓存', 'CACHED') : state.demo ? 'DEMO' : 'LIVE');
   text('short-title', t('5 小时', '5 hours'));
   text('weekly-title', t('7 天', '7 days'));
-  text('plan', state.demo ? t('演示', 'DEMO') : (state.quota?.plan || 'CODEX').toUpperCase());
+  text('plan', state.demo ? t('演示', 'DEMO') : quotaDisplay.planLabel(state.quota?.plan) || 'CODEX');
   for (const [id, value] of [['short', state.quota?.short], ['weekly', state.quota?.weekly]]) {
     const visible = state.settings.display?.[id] !== false;
     $(`${id}-ring`).closest('.quota-row').hidden = !visible;

@@ -2,11 +2,17 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { CodexClient, discoverCodex } = require('../lib/codex.cjs');
+const { normalizeQuota } = require('../lib/quota.cjs');
 const fixture = path.join(__dirname, 'fake-server.cjs');
 
 test('reads real child process RPC with fragmented stdout and initialized handshake', async () => {
   const client = new CodexClient(process.execPath, [fixture]);
-  try { const q = await client.readQuota(); assert.equal(q.rateLimits.primary.usedPercent, 17); }
+  try {
+    const quota = normalizeQuota(await client.readQuota());
+    assert.equal(quota.short.remaining, 83);
+    assert.equal(quota.plan, 'prolite');
+    assert.equal(quota.weekly, null);
+  }
   finally { client.close(); }
   assert.equal(client.child, null); assert.equal(client.pending.size, 0);
 });

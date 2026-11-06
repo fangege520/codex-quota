@@ -45,29 +45,29 @@ test('rail data retains real zero credits and expiration but strips account and 
   assert.ok(!JSON.stringify(payload).includes('secret'));
 });
 
-test('turn usage pairs recorded effort with scoped or cumulative token counts', async () => {
+test('turn usage pairs recorded models and effort with scoped or cumulative token counts', async () => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-turn-test-'));
   const sessions = path.join(base, 'sessions'); fs.mkdirSync(sessions);
   const file = path.join(sessions, 'rollout-turns.jsonl');
   const [first, second, third, fourth] = [1, 2, 3, 4].map(i => '00000000-0000-4000-8000-00000000000' + i);
   const event = (type, turn_id) => ({ type: 'event_msg', payload: { type, turn_id } });
   const count = total_tokens => ({ type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { total_tokens } } } });
-  const context = (turn_id, effort) => ({ type: 'turn_context', payload: { turn_id, effort } });
+  const context = (turn_id, effort, model) => ({ type: 'turn_context', payload: { turn_id, effort, model } });
   fs.writeFileSync(file, [
-    event('task_started', first), context(first, 'none'), count(100), event('task_complete', first),
-    event('task_started', second), context(second, 'high'), count(155),
+    event('task_started', first), context(first, undefined, 'gpt-6.1-sol'), count(100), event('task_complete', first),
+    event('task_started', second), context(second, 'high', 'gpt-6-astra'), count(155),
     { type: 'token_usage_record', payload: { turn_id: second, turn_token_usage: { total_tokens: 48 }, thread_token_usage: { total_tokens: 155 } } },
-    count(160), context(second, 'unstructured text'), event('task_complete', second),
+    count(160), context(second, 'unstructured text', 'unstructured text'), event('task_complete', second),
     event('task_started', third), count(165), count(175), count(175), event('task_complete', third), count(200),
     event('task_started', fourth), context(undefined, 'xhigh'), count(230), event('task_complete', fourth)
   ].map((row, i) => JSON.stringify({ ...row, timestamp: new Date(Date.now() + i).toISOString() })).join('\n') + '\n');
   try {
     const index = new UsageIndex(base); await index.refresh();
     assert.deepEqual(index.getTurns([first, second, third, fourth]), {
-      [first]: { total: null, effort: 'none' },
-      [second]: { total: 48, effort: 'high' },
-      [third]: { total: 15, effort: null },
-      [fourth]: { total: 30, effort: 'xhigh' }
+      [first]: { total: null, effort: null, model: 'gpt-6.1-sol' },
+      [second]: { total: 48, effort: 'high', model: 'gpt-6-astra' },
+      [third]: { total: 15, effort: null, model: null },
+      [fourth]: { total: 30, effort: 'xhigh', model: null }
     });
   } finally { fs.unlinkSync(file); fs.rmdirSync(sessions); fs.rmdirSync(base); }
 });

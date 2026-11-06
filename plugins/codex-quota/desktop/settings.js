@@ -25,7 +25,7 @@ function paint(state) {
     ['refresh', '立即刷新', 'Refresh now'], ['reset-position', '恢复默认位置', 'Reset position'], ['choose-executable', '选择 Codex 程序', 'Choose Codex executable']
   ]) $(id).textContent = t(cn, en);
   quotaDisplay.apply(document.body, state.display);
-  $('plan').textContent = state.quota?.plan || '—';
+  $('plan').textContent = quotaDisplay.planLabel(state.quota?.plan) || '—';
   const q = state.quota;
   const credit = quotaDisplay.creditValue(q?.credits);
   const rows = [];

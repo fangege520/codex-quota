@@ -3,7 +3,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
-const { THREAD_ID, normalizeEffort } = require('./usage.cjs');
+const { THREAD_ID, normalizeEffort, normalizeModel } = require('./usage.cjs');
 const quotaDisplay = require('../desktop/display.js');
 
 const DEFAULT_PORT = 9339;
@@ -189,7 +189,8 @@ class ComposerBridge extends EventEmitter {
                   const values = Object.fromEntries(ids.map(id => {
                     const turn = result?.[id];
                     const total = turn?.total;
-                    return [id, { total: Number.isSafeInteger(total) && total >= 0 ? total : null, effort: normalizeEffort(turn?.effort) }];
+                    return [id, { total: Number.isSafeInteger(total) && total >= 0 ? total : null,
+                      effort: normalizeEffort(turn?.effort), model: normalizeModel(turn?.model) }];
                   }));
                   await connection.call('Runtime.evaluate', { expression: 'window.__codexQuotaRailV1?.setTurnUsage(' + JSON.stringify(values) + ')', returnByValue: true });
                 } catch {}

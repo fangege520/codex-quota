@@ -39,7 +39,7 @@ async function main() {
     bridge = new ComposerBridge({
       port, targetFilter: t => t.type === 'page' && t.url.includes('codex-quota-fixture.html'),
       threadUsage: async id => id.endsWith('0001') ? { total:58910193,input:58638547,output:271646,cached:57459968,reasoning:113638 } : null,
-      turnUsage: async ids => Object.fromEntries(ids.filter(id => id.endsWith('0002')).map(id => [id, { total: 217360, effort: 'high' }]))
+      turnUsage: async ids => Object.fromEntries(ids.filter(id => id.endsWith('0002')).map(id => [id, { total: 217360, effort: 'high', model: 'gpt-6.1-sol' }]))
     });
     let settingsOpened = 0, officialOpened = 0; bridge.on('settings', () => settingsOpened++); bridge.on('official', () => officialOpened++);
     const state = { demo: true, settings: { language: 'zh' }, quota: { plan:'plus', credits:{balance:'120.5'}, resets:{count:2,cards:[{expiresAt:Date.now()+86400000},{expiresAt:Date.now()+172800000}]}, fetchedAt: Date.now(), short: { remaining: 86, resetsAt: Date.now() + 12000000 }, weekly: { remaining: 26, resetsAt: Date.now() + 170000000 } } };
@@ -71,6 +71,16 @@ async function main() {
     })()`);
     await until(() => bridge.status.sidebarVisible === 1, 'sidebar quota injection');
     assert.equal(await evaluate(rail+".querySelector('.plan').textContent"), 'Plus');
+    state.quota.plan = 'prolite';
+    bridge.preview(state);
+    await until(async () => (await evaluate(rail+".querySelector('.plan').textContent")) === 'Pro Lite', 'Pro Lite plan label');
+    assert.equal(await evaluate(`(() => {
+      const plan = ${rail}.querySelector('.plan'), range = document.createRange();
+      range.selectNodeContents(plan);
+      const bounds = plan.getBoundingClientRect();
+      return [...range.getClientRects()].every(rect => rect.left >= bounds.left && rect.right <= bounds.right);
+    })()`), true);
+    checks.push('Pro Lite label fits in the sidebar next to settings');
     assert.equal(await evaluate(rail+".querySelector('.resets b').textContent"), '2');
     state.settings.display = { weekly: false, credits: false };
     bridge.preview(state);
@@ -97,8 +107,8 @@ async function main() {
     await pause(550); await evaluate(rail+".querySelector('.official').click()");
     await until(() => officialOpened === 1, 'official reset page action');
     const turnBadge = rail + ".querySelector('.turn-badge:not([hidden])')";
-    await until(async () => (await evaluate(turnBadge + '?.textContent')) === '≈21.7万 Token · 推理 高', 'turn usage and reasoning effort are anchored to the duration row');
-    assert.match(await evaluate(turnBadge + '.title'), /217,360 Token\n推理强度 · high/);
+    await until(async () => (await evaluate(turnBadge + '?.textContent')) === '≈21.7万 Token · gpt-6.1-sol · 推理 高', 'turn usage, model and effort are anchored to the duration row');
+    assert.match(await evaluate(turnBadge + '.title'), /217,360 Token\n本轮模型 · gpt-6\.1-sol\n推理强度 · high/);
     assert.equal(await evaluate(`(() => {
       const badge = ${rail}.querySelector('.turn-badge');
       const button = document.querySelector('[data-turn-key] button');
@@ -121,7 +131,7 @@ async function main() {
     await evaluate("document.querySelector('.demo-thread').dispatchEvent(new PointerEvent('pointerout',{bubbles:true}))");
     await until(async () => (await evaluate(rail+".querySelector('.panel').hidden")) === true, 'thread hover dismissed');
     await evaluate("document.querySelector('#native-tooltip').remove()");
-    checks.push('thread hover avoids the native tooltip and the duration row shows its token usage and reasoning effort');
+    checks.push('thread hover avoids the native tooltip and the duration row shows its token usage, model and reasoning effort');
     const layout = await evaluate("(()=>{const strip=document.querySelector('#codex-quota-composer-v1').getBoundingClientRect(),anchor=document.querySelector('[data-codex-intelligence-trigger]').getBoundingClientRect(),left=document.querySelector('#permissions').getBoundingClientRect();return {left:strip.left,right:strip.right,modelLeft:anchor.left,permissionRight:left.right}})()");
     assert(layout.right < layout.modelLeft); assert(layout.left > layout.permissionRight); checks.push('strip fits in empty space left of model picker without covering controls');
     assert.equal(await evaluate("document.querySelector('#prompt').textContent"), original);

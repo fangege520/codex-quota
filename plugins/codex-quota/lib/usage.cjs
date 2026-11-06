@@ -7,6 +7,7 @@ const DAY = 86400000;
 const counts = { total: 'total_tokens', input: 'input_tokens', cached: 'cached_input_tokens', output: 'output_tokens', reasoning: 'reasoning_output_tokens' };
 const hourKey = date => `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}/${date.getHours()}`;
 const normalizeEffort = value => typeof value === 'string' && /^[a-z][a-z0-9_-]{0,23}$/.test(value) ? value : null;
+const normalizeModel = value => typeof value === 'string' && /^[a-z0-9][a-z0-9._:/-]{0,95}$/i.test(value) ? value : null;
 
 function record(index, line, now) {
   // Ignore conversation lines without parsing or retaining their contents.
@@ -24,7 +25,13 @@ function record(index, line, now) {
   if (event.type === 'turn_context') {
     const id = turnId || (payload?.turn_id == null ? index.turn?.id : null);
     const effort = normalizeEffort(payload?.effort);
-    if (id && effort) index.turns.set(id, { ...index.turns.get(id), effort });
+    const model = normalizeModel(payload?.model);
+    if (id && (effort || model)) {
+      const turn = index.turns.get(id) || {};
+      if (effort) turn.effort = effort;
+      if (model) turn.model = model;
+      index.turns.set(id, turn);
+    }
     return;
   }
   if (event.type === 'token_usage_record') {
@@ -133,10 +140,11 @@ class UsageIndex {
         const match = matches.get(id) || {};
         if (value.total != null && (match.total == null || value.direct)) match.total = value.total;
         if (value.effort) match.effort = value.effort;
+        if (value.model) match.model = value.model;
         matches.set(id, match);
       }
     }
-    return Object.fromEntries([...matches].map(([id, { total = null, effort = null }]) => [id, { total, effort }]));
+    return Object.fromEntries([...matches].map(([id, { total = null, effort = null, model = null }]) => [id, { total, effort, model }]));
   }
   chart(now = new Date()) {
     const hours = new Map();
@@ -153,4 +161,4 @@ class UsageIndex {
     };
   }
 }
-module.exports = { UsageIndex, THREAD_ID, normalizeEffort };
+module.exports = { UsageIndex, THREAD_ID, normalizeEffort, normalizeModel };

@@ -22,6 +22,7 @@ function normalizeQuota(result, now = Date.now()) {
   const balance = typeof rawCredits?.balance === 'string' && /^-?\d+(?:\.\d+)?$/.test(rawCredits.balance) ? rawCredits.balance.slice(0, 32) : null;
   const credits = rawCredits ? { balance, unlimited: rawCredits.unlimited === true } : null;
   const rawResets = result.rateLimitResetCredits;
+  const plan = [bucket.planType, result.accountPlan].find(value => typeof value === 'string' && value.length);
   const resets = Number.isSafeInteger(rawResets?.availableCount) && rawResets.availableCount >= 0 ? {
     count: rawResets.availableCount,
     cards: (Array.isArray(rawResets.credits) ? rawResets.credits : []).filter(card => card?.status === 'available').slice(0, 100)
@@ -30,7 +31,7 @@ function normalizeQuota(result, now = Date.now()) {
   } : null;
   return {
     bucketId: bucket.limitId ?? 'codex',
-    plan: typeof bucket.planType === 'string' ? bucket.planType.slice(0, 32) : null,
+    plan: plan?.slice(0, 32) ?? null,
     short,
     weekly,
     credits, resets,
