@@ -1,1 +1,17 @@
-<!doctype html><html><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'"><link rel="stylesheet" href="bar.css"><script defer src="bar.js"></script><title>Codex Quota · Taskbar</title></head><body><button id="bar" aria-label="Codex remaining quota"><span class="item"><span class="ring" id="short-ring"><i>H</i></span><span class="label">5h</span><strong id="short">—</strong></span><span class="divider"></span><span class="item weekly"><span class="ring" id="weekly-ring"><i>W</i></span><span class="label">7d</span><strong id="weekly">—</strong></span><span id="cached" hidden>•</span></button></body></html>
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <link rel="stylesheet" href="bar.css">
+  <script defer src="display.js"></script>
+  <script defer src="bar.js"></script>
+  <title>Codex Quota · Taskbar</title>
+</head>
+<body>
+  <button id="bar" aria-label="Codex remaining quota">
+    <span class="item"><span class="label">5h</span><strong id="short">—</strong><span class="track" aria-hidden="true"><span class="fill"></span></span></span>
+    <span class="item"><span class="label">7d</span><strong id="weekly">—</strong><span class="track" aria-hidden="true"><span class="fill"></span></span></span>
+  </button>
+</body>
+</html>

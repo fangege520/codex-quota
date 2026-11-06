@@ -16,6 +16,7 @@ public static class QuotaTaskbars {
  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd,out RECT rect);
  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+ [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hwnd,int attribute,out RECT rect,int size);
  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint processId);
  [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
  [DllImport("oleacc.dll")] static extern int AccessibleObjectFromWindow(IntPtr hwnd,uint objectId,ref Guid iid,[MarshalAs(UnmanagedType.Interface)] out Accessibility.IAccessible accessible);
@@ -44,7 +45,13 @@ public static class QuotaTaskbars {
   }catch{}finally{if(root!=null&&Marshal.IsComObject(root))Marshal.ReleaseComObject(root);}
   return items;
  }
- public static QuotaRect Foreground() {return Rect(GetForegroundWindow());}
+ public static QuotaRect Foreground() {
+  SetThreadDpiAwarenessContext(new IntPtr(-4));
+  var hwnd=GetForegroundWindow();RECT r;
+  // Exclude the invisible resize border from maximized windows.
+  if(DwmGetWindowAttribute(hwnd,9,out r,Marshal.SizeOf(typeof(RECT)))!=0)return Rect(hwnd);
+  return new QuotaRect{x=r.left,y=r.top,width=r.right-r.left,height=r.bottom-r.top};
+ }
  public static QuotaBar[] Read(int excludeProcessId) {
   SetThreadDpiAwarenessContext(new IntPtr(-4));
   var bars=new List<QuotaBar>(); var windows=new List<IntPtr>();

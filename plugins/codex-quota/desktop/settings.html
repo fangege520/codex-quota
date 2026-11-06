@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; connect-src 'none'; base-uri 'none'"><title>Codex Quota · Settings</title><link rel="stylesheet" href="settings.css"><script defer src="settings.js"></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; connect-src 'none'; base-uri 'none'"><title>Codex Quota · Settings</title><link rel="stylesheet" href="settings.css"><script defer src="display.js"></script><script defer src="settings.js"></script></head>
 <body>
   <header class="titlebar"><div class="brand"><span class="mark">◔</span><div><h1 id="title">用量助手</h1><div class="sub">CODEX QUOTA</div></div></div><button id="close" class="icon" aria-label="关闭">×</button></header>
   <main>
@@ -14,10 +14,49 @@
     <section class="card displays">
       <div class="section-head"><h2 id="display-title">显示设置</h2><select id="theme" aria-label="外观"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></div>
       <div id="switches" class="switches">
+        <div class="switch-row"><span id="label-sidebar">左侧栏</span><button class="switch" data-setting="sidebar" role="switch" aria-labelledby="label-sidebar" aria-checked="true"></button></div>
         <div class="switch-row"><span id="label-composer">编辑框额度</span><button class="switch" data-setting="composer" role="switch" aria-labelledby="label-composer" aria-checked="false"></button></div>
         <div class="switch-row"><span id="label-bar">任务栏额度</span><button class="switch" data-setting="bar" role="switch" aria-labelledby="label-bar" aria-checked="false"></button></div>
         <div class="switch-row"><span id="label-floating">桌面悬浮框</span><button class="switch" data-setting="floating" role="switch" aria-labelledby="label-floating" aria-checked="false"></button></div>
       </div>
+      <p id="bar-status" class="display-note" aria-live="polite"></p>
+      <h3 id="content-title">各区域显示的内容</h3>
+      <div class="switches content-switches">
+        <div class="switch-row"><span id="label-short">5 小时额度</span><button class="switch" data-setting="short" role="switch" aria-labelledby="label-short" aria-checked="true"></button></div>
+        <div class="switch-row"><span id="label-weekly">7 天额度</span><button class="switch" data-setting="weekly" role="switch" aria-labelledby="label-weekly" aria-checked="true"></button></div>
+        <div class="switch-row"><span id="label-credits">Codex 点数</span><button class="switch" data-setting="credits" role="switch" aria-labelledby="label-credits" aria-checked="true"></button></div>
+        <div class="switch-row"><span id="label-resets">重置卡数量</span><button class="switch" data-setting="resets" role="switch" aria-labelledby="label-resets" aria-checked="true"></button></div>
+      </div>
+      <p id="content-note" class="display-note"></p>
+      <div class="appearance">
+        <div><h3 id="accent-title">主题色</h3><div id="swatches" class="swatches" role="group" aria-labelledby="accent-title"></div></div>
+        <div class="section-head"><h3 id="region-title">区域样式</h3><select id="region" aria-labelledby="region-title"></select></div>
+        <div class="region-controls">
+          <label for="region-font" id="font-label">字号</label><input id="region-font" type="range" min="0" max="4" step="1" value="2"><output id="font-value" for="region-font">100%</output>
+          <label for="region-ring" id="ring-label">圆环大小</label><input id="region-ring" type="range" min="0" max="4" step="1" value="2"><output id="ring-value" for="region-ring">100%</output>
+          <label for="region-color" id="color-label">字色</label><select id="region-color"></select>
+        </div>
+        <div id="style-preview" class="style-preview"><span id="preview-label">预览</span><span class="sample" data-preview="short"><i aria-hidden="true"></i> <span>5h</span> <b>87%</b></span><span class="sample" data-preview="weekly"><i aria-hidden="true"></i> <span>7d</span> <b>98%</b></span><span class="preview-metric" data-preview="credits"><span id="preview-credits-label">点数</span> <b>499</b></span><span class="preview-metric" data-preview="resets"><span id="preview-reset-label">重置卡</span> <b>3</b></span></div>
+        <p id="region-note" class="display-note"></p>
+      </div>
+    </section>
+    <section class="card preferences">
+      <h2 id="preferences-title">通用设置</h2>
+      <div class="switches">
+        <label class="switch-row" for="language"><span id="label-language">语言</span><select id="language"><option value="zh">中文</option><option value="en">English</option></select></label>
+        <label class="switch-row" for="interval"><span id="label-interval">刷新间隔</span><select id="interval"><option value="30">30 秒</option><option value="60">60 秒</option><option value="120">120 秒</option></select></label>
+        <div class="switch-row"><span id="label-compact">折叠悬浮框</span><button class="switch" data-setting="compact" role="switch" aria-labelledby="label-compact" aria-checked="false"></button></div>
+        <div class="switch-row"><span id="label-topmost">悬浮框始终置顶</span><button class="switch" data-setting="topmost" role="switch" aria-labelledby="label-topmost" aria-checked="true"></button></div>
+        <label class="switch-row" for="opacity"><span id="label-opacity">悬浮框透明度</span><select id="opacity"><option value="1">100%</option><option value="0.8">80%</option><option value="0.65">65%</option></select></label>
+        <div class="switch-row"><span id="label-launch-at-login">登录时启动</span><button class="switch" data-setting="launchAtLogin" role="switch" aria-labelledby="label-launch-at-login" aria-checked="false"></button></div>
+      </div>
+      <p id="login-note" class="display-note"></p>
+      <div class="settings-actions">
+        <button id="refresh" type="button">立即刷新</button><button id="toggle-floating" type="button">显示悬浮框</button>
+        <button id="reset-position" type="button">恢复默认位置</button><button id="choose-executable" type="button">选择 Codex 程序</button>
+      </div>
+      <p id="executable-note" class="display-note"></p>
+      <p id="shortcut-note" class="display-note"></p>
     </section>
     <footer><span id="connection">等待连接 Codex</span><button class="link" id="launch">启动 Codex（用量助手）</button></footer>
   </main>

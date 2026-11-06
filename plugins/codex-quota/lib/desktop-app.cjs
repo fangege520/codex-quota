@@ -2,11 +2,23 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { spawn, spawnSync } = require('node:child_process');
+const { execFile, spawn, spawnSync } = require('node:child_process');
+const { setTimeout: delay } = require('node:timers/promises');
+const { promisify } = require('node:util');
 const { DEFAULT_PORT, validPort } = require('./composer.cjs');
 
 function windowsApps() {
-  const script = '$ErrorActionPreference="SilentlyContinue"; $items=@(Get-Process ChatGPT,Codex | Where-Object { $_.Path -and ($_.ProcessName -eq "ChatGPT" -or $_.Path -match "WindowsApps.*\\\\app\\\\Codex.exe$") } | Select-Object -ExpandProperty Path -Unique); if($items.Count -eq 0){$items=@(Get-AppxPackage OpenAI.Codex | ForEach-Object { Join-Path $_.InstallLocation "app\\ChatGPT.exe" })}; ConvertTo-Json -Compress -InputObject @($items)';
+  const script = `
+    $ErrorActionPreference="SilentlyContinue"
+    [Console]::OutputEncoding=[Text.Encoding]::UTF8
+    $session=(Get-Process -Id $PID).SessionId
+    $items=@(Get-Process ChatGPT,Codex | Where-Object {
+      $_.SessionId -eq $session -and $_.Path -and
+        (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $_.Path) "resources/app.asar") -PathType Leaf)
+    } | Select-Object -ExpandProperty Path -Unique)
+    if($items.Count -eq 0){$items=@(Get-AppxPackage OpenAI.Codex | ForEach-Object { Join-Path $_.InstallLocation "app/ChatGPT.exe" })}
+    ConvertTo-Json -Compress -InputObject @($items)
+  `;
   const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', windowsHide: true, timeout: 5000 });
   try { const value = JSON.parse(result.stdout.trim()); return Array.isArray(value) ? value : [value]; } catch { return []; }
 }
@@ -28,12 +40,40 @@ function discoverDesktopApp(override) {
 }
 function isDesktopRunning() {
   if (process.platform === 'win32') {
-    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'if(Get-Process ChatGPT,Codex -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -eq "ChatGPT" -or $_.Path -match "WindowsApps.*\\\\app\\\\Codex.exe$" }){"running"}'], { encoding: 'utf8', windowsHide: true, timeout: 5000 });
+    const script = `
+      $session=(Get-Process -Id $PID).SessionId
+      if(Get-Process ChatGPT,Codex -ErrorAction SilentlyContinue | Where-Object {
+        $_.SessionId -eq $session -and ($_.ProcessName -eq "ChatGPT" -or
+          ($_.Path -and (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $_.Path) "resources/app.asar") -PathType Leaf)))
+      }){"running"}
+    `;
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', windowsHide: true, timeout: 5000 });
     // Treat detection failure as running; never silently launch a conflicting instance.
     return result.status !== 0 || result.stdout.includes('running');
   }
-  if (process.platform === 'darwin') return spawnSync('/usr/bin/pgrep', ['-x', 'ChatGPT|Codex'], { windowsHide: true, timeout: 3000 }).status !== 1;
+  if (process.platform === 'darwin') return spawnSync('/usr/bin/pgrep', ['-u', String(process.getuid()), '-x', 'ChatGPT|Codex'], { timeout: 3000 }).status !== 1;
   return true;
+}
+async function stopDesktop(executable) {
+  const run = promisify(execFile);
+  const script = name => path.join(__dirname, name).replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2');
+  try {
+    if (process.platform === 'win32') {
+      await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', script('stop-windows-app.ps1'), '-Executable', executable], { windowsHide: true });
+    } else if (process.platform === 'darwin') {
+      await run('/usr/bin/osascript', ['-l', 'JavaScript', script('stop-mac-app.js'), executable], { timeout: 10000 });
+    } else {
+      throw new Error('UNSUPPORTED_PLATFORM');
+    }
+  } catch (error) {
+    throw new Error(error.code === 1223 ? 'CODEX_RESTART_CANCELED' : 'CODEX_STOP_FAILED', { cause: error });
+  }
+  for (let attempt = 0; attempt < 12; attempt++) {
+    if (!isDesktopRunning()) return;
+    await delay(250);
+  }
+  throw new Error('CODEX_STOP_FAILED');
 }
 async function launchDesktop({ executable, port = DEFAULT_PORT } = {}) {
   if (!validPort(port)) throw new Error('INVALID_CDP_PORT');
@@ -58,4 +98,4 @@ function runtimeFile() {
   const base = process.platform === 'win32' ? process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming') : path.join(os.homedir(), 'Library', 'Application Support');
   return path.join(base, 'codex-quota', 'runtime-status.json');
 }
-module.exports = { discoverDesktopApp, isDesktopRunning, launchDesktop, runtimeFile };
+module.exports = { discoverDesktopApp, isDesktopRunning, launchDesktop, stopDesktop, runtimeFile };

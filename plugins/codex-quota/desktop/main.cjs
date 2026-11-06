@@ -7,9 +7,10 @@ const assert = require('node:assert/strict');
 const { CodexClient, discoverCodex } = require('../lib/codex.cjs');
 const { normalizeQuota, clampBounds } = require('../lib/quota.cjs');
 const { ComposerBridge, DEFAULT_PORT, validPort } = require('../lib/composer.cjs');
-const { discoverDesktopApp, launchDesktop } = require('../lib/desktop-app.cjs');
-const { findFreeBounds, popoverBounds, TaskbarWatcher } = require('../lib/system-bar.cjs');
+const { discoverDesktopApp, launchDesktop, stopDesktop } = require('../lib/desktop-app.cjs');
+const { findTaskbarCardBounds, popoverBounds, TaskbarWatcher } = require('../lib/system-bar.cjs');
 const { UsageIndex } = require('../lib/usage.cjs');
+const quotaDisplay = require('./display.js');
 const OFFICIAL_USAGE = 'https://chatgpt.com/settings/usage';
 const usage = new UsageIndex();
 const threadEstimates = new Map();
@@ -36,7 +37,8 @@ const settings = {
   desktopAppPath: typeof saved.desktopAppPath === 'string' && fs.existsSync(saved.desktopAppPath) ? saved.desktopAppPath : '',
   systemBarEnabled: saved.systemBarEnabled !== false,
   floatingEnabled: saved.floatingEnabled === true,
-  theme: ['system', 'light', 'dark'].includes(saved.theme) ? saved.theme : 'system'
+  theme: ['system', 'light', 'dark'].includes(saved.theme) ? saved.theme : 'system',
+  display: quotaDisplay.normalize(saved.display)
 };
 nativeTheme.themeSource = settings.theme;
 if (process.argv.includes('--system-bar-on')) settings.systemBarEnabled = true;
@@ -45,8 +47,12 @@ if (process.argv.includes('--composer-on')) settings.composerEnabled = true;
 if (process.argv.includes('--composer-off')) settings.composerEnabled = false;
 let win, tray, client, timer, saveTimer, quitting = false, refreshing = false, failures = 0;
 let bridge, cleanupComplete = false, cleanupInFlight = false;
-let taskbarWatcher, popover = false, hoverOnly = false, popupCloseTimer;
+let taskbarWatcher, taskbarRecoveryTimer, systemMenuOpen = false, popover = false, hoverOnly = false, popupCloseTimer;
 let settingsWindow, launchingDesktop = false;
+let pendingDesktopLaunch = process.argv.includes('--launch-codex');
+// Older Codex shortcuts include --show. Opening Codex respects the saved setting.
+const showOnStartup = !pendingDesktopLaunch && process.argv.includes('--show');
+let windowLoaded = false;
 const barWindows = new Map();
 const state = { quota: null, error: null, loading: true, settings, demo: smoke };
 const choose = (zh, en) => settings.language === 'zh' ? zh : en;
@@ -58,16 +64,21 @@ function persist() {
   fs.renameSync(temp, settingsFile);
 }
 function snapshot() { const result = JSON.parse(JSON.stringify(state)); if (popover) result.settings.collapsed = false; return result; }
-function barSnapshot(item) { return { ...snapshot(), systemBarCompact: !!item.compact, systemBarTiny: !!item.tiny }; }
 function settingsSnapshot() {
-  return { language: settings.language, quota: state.quota, composer: settings.composerEnabled, bar: settings.systemBarEnabled, floating: settings.floatingEnabled, theme: settings.theme, sidebarVisible: state.composer?.sidebarVisible || 0, mac: process.platform === 'darwin' };
+  return { language: settings.language, quota: state.quota, composer: settings.composerEnabled, bar: settings.systemBarEnabled, floating: settings.floatingEnabled, theme: settings.theme,
+    display: settings.display, barReason: state.systemBarReason, connection: composerStatusText(), mac: process.platform === 'darwin',
+    compact: settings.collapsed, topmost: settings.topmost, opacity: settings.opacity, interval: settings.interval,
+    floatingVisible: !!win?.isVisible() && !popover, canRefresh: !refreshing && !smoke,
+    canLaunchAtLogin: app.isPackaged, launchAtLogin: app.isPackaged && app.getLoginItemSettings().openAtLogin,
+    shortcutAvailable: !!state.shortcutAvailable, codexExecutable: settings.codexPath ? path.basename(settings.codexPath) : '' };
 }
-function publish() {
+function publish(preview = false) {
   state.systemDark = settings.theme === 'dark' || settings.theme === 'system' && (nativeTheme.shouldUseDarkColorsForSystemIntegratedUI ?? nativeTheme.shouldUseDarkColors);
-  bridge?.update(state);
+  if (preview === true) bridge?.preview(state);
+  else bridge?.update(state);
   if (win && !win.isDestroyed()) win.webContents.send('quota:changed', snapshot());
   if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.webContents.send('quota:settings-changed', settingsSnapshot());
-  for (const item of barWindows.values()) if (!item.win.isDestroyed()) item.win.webContents.send('quota:changed', barSnapshot(item));
+  for (const item of barWindows.values()) if (!item.win.isDestroyed()) item.win.webContents.send('quota:changed', snapshot());
   if (!smoke) {
     try {
       fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
@@ -78,7 +89,10 @@ function publish() {
 }
 function startBridge() {
   if (smoke || bridge) return;
-  bridge = new ComposerBridge({ port: settings.composerPort, threadUsage: readThreadUsage });
+  bridge = new ComposerBridge({ port: settings.composerPort, threadUsage: readThreadUsage, turnUsage: async ids => {
+    await usage.refresh();
+    return usage.getTurns(ids);
+  } });
   bridge.on('status', status => { state.composer = status; publish(); });
   bridge.on('settings', () => openSettings().catch(() => {}));
   bridge.on('official', openOfficialUsage);
@@ -102,23 +116,58 @@ function composerStatusText() {
   if (status?.sidebarVisible) return choose('左栏用量已连接', 'Sidebar quota connected');
   if (status?.visible) return choose(`已在 ${status.visible} 个窗口显示额度条`, `Quota strip visible in ${status.visible} window(s)`);
   if (status?.phase === 'connected') return choose('已连接，等待输入框或足够的显示空间', 'Connected; waiting for a composer with enough space');
-  return choose(`等待本机调试连接（端口 ${settings.composerPort}）`, `Waiting for local debugging connection (port ${settings.composerPort})`);
+  if (status?.phase === 'attach-failed') return choose('已找到 Codex 窗口，暂时无法加载用量组件', 'Codex window found; quota widgets could not load');
+  if (launchingDesktop) return choose('正在启动并连接 Codex…', 'Starting and connecting to Codex…');
+  return choose('未连接 Codex，可从这里启动并连接', 'Codex disconnected. Launch it here to connect.');
 }
 async function launchCodex() {
   if (launchingDesktop) return;
   launchingDesktop = true;
+  publish();
   try {
     startBridge();
     if (await bridge?.focus()) return;
     // Re-resolve Store installs after every app update. A saved path is only
     // used for a still-existing custom install.
     const custom = settings.desktopAppPath && !/[\\/]WindowsApps[\\/]/i.test(settings.desktopAppPath) && fs.existsSync(settings.desktopAppPath) ? settings.desktopAppPath : undefined;
-    await launchDesktop({ executable: process.env.CODEX_QUOTA_APP_PATH || custom, port: settings.composerPort });
+    const options = { executable: process.env.CODEX_QUOTA_APP_PATH || custom, port: settings.composerPort };
+    try {
+      await launchDesktop(options);
+    } catch (error) {
+      if (error.message !== 'CODEX_RESTART_REQUIRED' || quitting) throw error;
+      const executable = discoverDesktopApp(options.executable);
+      const parent = settingsWindow?.isVisible() ? settingsWindow : win?.isVisible() ? win : undefined;
+      const { response } = await dialog.showMessageBox(parent, {
+        type: 'warning', title: 'Codex Quota',
+        message: choose('需要重启 Codex 客户端，是否重启？', 'Codex needs to restart. Restart now?'),
+        detail: choose('重启会强制关闭 Codex，可能中断正在运行的任务。', 'Restarting force-closes Codex and may interrupt running tasks.'),
+        buttons: [choose('重启', 'Restart'), choose('取消', 'Cancel')],
+        defaultId: 1, cancelId: 1, noLink: true
+      });
+      if (response !== 0 || quitting) return;
+      if (await bridge.focus() || quitting) return;
+      await stopDesktop(executable);
+      if (quitting) return;
+      await launchDesktop(options);
+    }
+    if (!await bridge.waitForConnection()) throw new Error('CODEX_CONNECTION_UNAVAILABLE');
   } catch (error) {
-    const restart = error.message === 'CODEX_RESTART_REQUIRED';
-    await dialog.showMessageBox(settingsWindow || win, { type: 'info', title: 'Codex Quota', message: restart ? choose('当前 Codex 由普通图标启动', 'Codex was opened normally') : choose('未能启动 Codex', 'Could not launch Codex'),
-      detail: restart ? choose('请在任务完成后完全退出 Codex，再打开「Codex（用量助手）」快捷方式。之后使用该入口，左栏会自动连接。', 'Quit Codex after your tasks finish, then use the Codex with Quota shortcut. This shortcut connects the sidebar automatically.') : choose('请确认 Codex 已安装；可以设置 CODEX_QUOTA_APP_PATH 后重新启动额度助手。', 'Check that Codex is installed. You can set CODEX_QUOTA_APP_PATH and restart the helper.') });
-  } finally { launchingDesktop = false; }
+    if (quitting || error.message === 'CODEX_RESTART_CANCELED') return;
+    const retry = choose('请等当前任务完成，再用桌面快捷方式或助手设置重试。', 'Finish active work and try again from the shortcut or the assistant settings.');
+    const messages = {
+      CODEX_RESTART_REQUIRED: [choose('Codex 已运行，尚未连接用量助手', 'Codex is running without a quota connection'), retry],
+      CODEX_STOP_FAILED: [choose('未能关闭 Codex 客户端', 'Could not close Codex'), retry],
+      CODEX_CONNECTION_UNAVAILABLE: [choose('Codex 启动后未建立用量连接', 'Codex did not connect after launch'), retry]
+    };
+    const [message, detail] = messages[error.message] || [
+      choose('未能启动 Codex', 'Could not launch Codex'),
+      choose('请确认 Codex 已安装；可以设置 CODEX_QUOTA_APP_PATH 后重新启动额度助手。', 'Check that Codex is installed. You can set CODEX_QUOTA_APP_PATH and restart the helper.')
+    ];
+    await dialog.showMessageBox(settingsWindow || win, { type: 'info', title: 'Codex Quota', message, detail });
+  } finally {
+    launchingDesktop = false;
+    if (!quitting) publish();
+  }
 }
 function position() {
   const primary = screen.getPrimaryDisplay();
@@ -130,11 +179,13 @@ function fitWindow() {
   settings.position = { x, y };
   win.setBounds(position());
 }
-function collapse() {
+function setCompact(enabled) {
+  if (settings.collapsed === enabled) return;
   popover = false; hoverOnly = false;
-  settings.collapsed = !settings.collapsed;
+  settings.collapsed = enabled;
   fitWindow(); persist(); publish();
 }
+function collapse() { setCompact(!settings.collapsed); }
 function show() { popover = false; hoverOnly = false; clearTimeout(popupCloseTimer); win.setBounds(position()); win.setAlwaysOnTop(settings.topmost, 'floating'); win.setOpacity(settings.opacity); publish(); win.show(); publish(); if (process.platform === 'darwin') app.dock?.hide(); }
 function hide() { clearTimeout(popupCloseTimer); popover = false; hoverOnly = false; win.hide(); publish(); }
 function setFloating(enabled) { settings.floatingEnabled = enabled; persist(); if (enabled) show(); else hide(); }
@@ -179,51 +230,102 @@ function secureContents(window) {
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
 }
-async function updateTaskbars(data) {
-  if (!settings.systemBarEnabled || quitting) return;
+async function updateTaskbars(data, watcher) {
+  const current = () => taskbarWatcher === watcher && settings.systemBarEnabled && !quitting;
+  if (!current()) return;
   const active = new Set();
+  const reasons = new Set();
+  const hasContent = settings.display.short || settings.display.weekly;
+  const now = Date.now();
+  const sameBounds = (a, b) => ['x', 'y', 'width', 'height'].every(key => a?.[key] === b?.[key]);
   for (const bar of data.bars) {
     active.add(bar.handle);
     let item = barWindows.get(bar.handle);
     const rect = screen.screenToDipRect(null, bar.bounds);
     const occupied = bar.occupied.map(r => screen.screenToDipRect(null, r));
+    if (item) item.lastSeenAt = now;
     const area = screen.getDisplayMatching(rect).bounds;
     const fg = screen.screenToDipRect(null, data.foreground);
     const fullscreen = fg.width >= area.width && fg.height >= area.height && fg.x <= area.x && fg.y <= area.y;
     const onScreen = rect.x >= area.x - 2 && rect.y >= area.y - 2 && rect.x + rect.width <= area.x + area.width + 2 && rect.y + rect.height <= area.y + area.height + 2;
-    const bounds = bar.visible && bar.accurate && onScreen && !fullscreen && (findFreeBounds(rect, occupied, 178, 36, item?.preferred) || findFreeBounds(rect, occupied, 80, 36, item?.preferred) || findFreeBounds(rect, occupied, 48, 36, item?.preferred));
-    if (!bounds) { item?.win.hide(); continue; }
+    const canReuse = !bar.accurate && item?.win.isVisible() && now - item.lastAccurateAt < 6500 && sameBounds(rect, item.lane);
+    if (canReuse) occupied.push(...item.protected);
+    const reason = !hasContent ? 'content-hidden' : fullscreen ? 'fullscreen' : !bar.visible || !onScreen ? 'taskbar-hidden' : !bar.accurate && !canReuse ? 'layout-unavailable' : null;
+    const bounds = !reason && findTaskbarCardBounds(rect, occupied, item?.preferred);
+    if (!bounds) { reasons.add(reason || 'no-safe-taskbar-space'); item?.win.hide(); continue; }
     if (!item) {
       const window = new BrowserWindow({ ...bounds, frame: false, transparent: true, resizable: false, show: false, skipTaskbar: true, hasShadow: false, alwaysOnTop: true, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
       secureContents(window); window.setAlwaysOnTop(true, 'pop-up-menu');
-      item = { win: window, compact: bounds.width < 178, tiny: bounds.width < 80 }; barWindows.set(bar.handle, item);
+      item = { win: window, lastSeenAt: now }; barWindows.set(bar.handle, item);
       window.on('closed', () => { if (barWindows.get(bar.handle) === item) barWindows.delete(bar.handle); });
-      await window.loadFile(path.join(__dirname, 'bar.html'));
+      window.webContents.on('render-process-gone', () => { if (!window.isDestroyed()) window.destroy(); });
+      try { await window.loadFile(path.join(__dirname, 'bar.html')); }
+      catch (error) { if (!window.isDestroyed()) window.destroy(); throw error; }
     }
-    if (!settings.systemBarEnabled || quitting || item.win.isDestroyed()) continue;
-    item.win.setBounds(bounds);
+    if (!current()) return;
+    if (item.win.isDestroyed() || !settings.display.short && !settings.display.weekly) continue;
+    if (!sameBounds(item.win.getBounds(), bounds)) item.win.setBounds(bounds);
     const actual = item.win.getBounds();
     const overlaps = occupied.some(r => actual.x < r.x + r.width && actual.x + actual.width > r.x && actual.y < r.y + r.height && actual.y + actual.height > r.y);
-    if (actual.y < rect.y || actual.y + actual.height > rect.y + rect.height || overlaps) { item.win.hide(); continue; }
-    item.compact = bounds.width < 178;
-    item.tiny = bounds.width < 80;
-    item.protected = occupied; item.lane = rect;
-    item.win.webContents.send('quota:changed', barSnapshot(item)); item.win.showInactive();
+    if (actual.x < rect.x || actual.x + actual.width > rect.x + rect.width || actual.y < rect.y || actual.y + actual.height > rect.y + rect.height || overlaps) {
+      reasons.add('no-safe-taskbar-space'); item.win.hide(); continue;
+    }
+    item.preferred = bounds.x;
+    if (bar.accurate) {
+      item.lastAccurateAt = now;
+      item.protected = occupied;
+      item.lane = rect;
+    }
+    if (!item.win.isVisible()) item.win.showInactive();
+    else if (!systemMenuOpen) item.win.moveTop();
   }
-  for (const [key, item] of barWindows) if (!active.has(key)) { item.win.destroy(); barWindows.delete(key); }
-  state.systemBarReason = [...barWindows.values()].some(item => item.win.isVisible()) ? 'visible' : 'no-safe-taskbar-space';
+  for (const [key, item] of barWindows) {
+    if (active.has(key)) continue;
+    item.win.hide();
+    if (now - item.lastSeenAt > 10000) item.win.destroy();
+  }
+  state.systemBarReason = [...barWindows.values()].some(item => item.win.isVisible()) ? 'visible'
+    : ['content-hidden', 'no-safe-taskbar-space', 'fullscreen', 'taskbar-hidden', 'layout-unavailable'].find(reason => reasons.has(reason)) || 'taskbar-unavailable';
   publish();
 }
 function setSystemBar(enabled) {
   settings.systemBarEnabled = enabled; persist();
   if (smoke) { publish(); return; }
   if (process.platform === 'win32') {
-    if (!enabled) { taskbarWatcher?.stop(); taskbarWatcher = null; for (const item of [...barWindows.values()]) item.win.destroy(); barWindows.clear(); }
+    if (!enabled) {
+      clearTimeout(taskbarRecoveryTimer); taskbarRecoveryTimer = null;
+      state.systemBarReason = null; taskbarWatcher?.stop(); taskbarWatcher = null;
+      for (const item of [...barWindows.values()]) item.win.destroy();
+      barWindows.clear();
+    }
     else if (!taskbarWatcher) {
-      taskbarWatcher = new TaskbarWatcher();
-      taskbarWatcher.on('layout', data => updateTaskbars(data).catch(() => { state.systemBarReason = 'layout-unavailable'; }));
-      taskbarWatcher.on('unavailable', () => { for (const item of barWindows.values()) item.win.hide(); state.systemBarReason = 'taskbar-unavailable'; publish(); });
-      taskbarWatcher.start();
+      const watcher = taskbarWatcher = new TaskbarWatcher();
+      let pending, applying = false;
+      function unavailable(reason) {
+        if (taskbarWatcher !== watcher || quitting || taskbarRecoveryTimer) return;
+        const hideStale = () => {
+          taskbarRecoveryTimer = null;
+          if (taskbarWatcher !== watcher || quitting) return;
+          for (const item of barWindows.values()) item.win.hide();
+          state.systemBarReason = reason; publish();
+        };
+        if ([...barWindows.values()].some(item => item.win.isVisible())) taskbarRecoveryTimer = setTimeout(hideStale, 6500);
+        else hideStale();
+      }
+      watcher.on('layout', async data => {
+        pending = data;
+        if (applying) return;
+        applying = true;
+        while (pending && taskbarWatcher === watcher && !quitting) {
+          const layout = pending; pending = null;
+          clearTimeout(taskbarRecoveryTimer); taskbarRecoveryTimer = null;
+          try { await updateTaskbars(layout, watcher); }
+          catch { unavailable('layout-unavailable'); }
+        }
+        applying = false;
+      });
+      watcher.on('unavailable', () => unavailable('taskbar-unavailable'));
+      watcher.start();
     }
   }
   publish();
@@ -264,55 +366,54 @@ async function refresh() {
 
 function menuItems() {
   return [
-    { label: choose('用量助手设置…', 'Quota settings…'), click: () => openSettings().catch(() => {}) },
-    { label: choose('显示 / 隐藏', 'Show / hide'), click: toggle },
-    { label: choose('立即刷新', 'Refresh now'), enabled: !refreshing && !smoke, click: refresh },
-    { label: choose('折叠成小条', 'Compact mode'), type: 'checkbox', checked: settings.collapsed, click: collapse },
-    { label: process.platform === 'darwin' ? choose('菜单栏显示额度', 'Show quota in menu bar') : choose('任务栏显示额度', 'Show quota in taskbar'), type: 'checkbox', checked: settings.systemBarEnabled, click: item => setSystemBar(item.checked) },
-    { label: choose('外观', 'Appearance'), submenu: [['system', '跟随系统', 'System'], ['light', '浅色', 'Light'], ['dark', '深色', 'Dark']].map(([value, zh, en]) => ({ label: choose(zh, en), type: 'radio', checked: settings.theme === value, click: () => { settings.theme = value; nativeTheme.themeSource = value; persist(); publish(); } })) },
-    { label: choose('输入框额度条（实验）', 'Composer quota strip (experimental)'), type: 'checkbox', checked: settings.composerEnabled, click: item => setComposer(item.checked) },
-    { label: composerStatusText(), click: () => dialog.showMessageBox(win, { type: 'info', title: 'Codex Quota', message: composerStatusText(), detail: choose('通过本机 CDP 添加独立额度条；不会读取或修改输入内容。没有足够空间时自动隐藏。关闭实验模式即可移除。', 'Adds a separate strip through local CDP. It does not read or modify editor content. Hidden automatically when space is insufficient; disable this mode to remove it.') }) },
-    { label: choose('启动 Codex（用量助手）', 'Launch Codex with Quota'), enabled: !smoke, click: launchCodex },
-    { label: choose('始终置顶', 'Always on top'), type: 'checkbox', checked: settings.topmost, click: item => {
-      settings.topmost = item.checked; win.setAlwaysOnTop(item.checked, 'floating'); persist(); publish();
-    } },
-    { type: 'separator' },
-    { label: choose('透明度', 'Opacity'), submenu: [1, 0.8, 0.65].map(value => ({
-      label: `${Math.round(value * 100)}%`, type: 'radio', checked: settings.opacity === value,
-      click: () => { settings.opacity = value; win.setOpacity(value); persist(); publish(); }
-    })) },
-    { label: choose('刷新间隔', 'Refresh interval'), submenu: [30, 60, 120].map(value => ({
-      label: choose(`${value} 秒`, `${value} seconds`), type: 'radio', checked: settings.interval === value,
-      click: () => { settings.interval = value; persist(); publish(); refresh(); }
-    })) },
-    { label: '语言 / Language', submenu: [{ label: '中文', id: 'zh' }, { label: 'English', id: 'en' }].map(item => ({
-      label: item.label, type: 'radio', checked: settings.language === item.id,
-      click: () => { settings.language = item.id; persist(); publish(); }
-    })) },
-    { label: choose('登录时启动', 'Launch at login'), type: 'checkbox', enabled: app.isPackaged,
-      checked: app.isPackaged && app.getLoginItemSettings().openAtLogin,
-      click: item => app.setLoginItemSettings({ openAtLogin: item.checked, args: ['--background'] }) },
-    { label: choose('选择 Codex 程序…', 'Choose Codex executable…'), click: async () => {
-      const result = await dialog.showOpenDialog(win, {
-        title: choose('选择 codex 可执行文件', 'Select the codex executable'), properties: ['openFile'],
-        ...(process.platform === 'win32' ? { filters: [{ name: 'Codex', extensions: ['exe'] }] } : {})
-      });
-      if (result.canceled || !result.filePaths[0]) return;
-      settings.codexPath = result.filePaths[0]; client?.close(); client = null; persist(); refresh();
-    } },
-    { label: choose('恢复默认位置', 'Reset position'), click: () => { settings.position = null; win.setBounds(position()); persist(); } },
-    { type: 'separator' },
-    { label: choose('快捷键：Ctrl/⌘ + Shift + Q', 'Shortcut: Ctrl/⌘ + Shift + Q'), enabled: false },
-    { label: choose('退出额度悬浮窗', 'Quit Codex Quota'), click: quit }
+    { label: choose('设置', 'Settings'), click: () => openSettings().catch(() => {}) },
+    { label: choose('退出', 'Quit'), click: quit }
   ];
+}
+function openContextMenu() {
+  if (hoverOnly) hide();
+  systemMenuOpen = true;
+  Menu.buildFromTemplate(menuItems()).popup({ callback: () => { systemMenuOpen = false; } });
+}
+async function chooseExecutable() {
+  const result = await dialog.showOpenDialog(settingsWindow || win, {
+    title: choose('选择 Codex 可执行文件', 'Select the Codex executable'), properties: ['openFile'],
+    ...(process.platform === 'win32' ? { filters: [{ name: 'Codex', extensions: ['exe'] }] } : {})
+  });
+  if (result.canceled || !result.filePaths[0]) return;
+  settings.codexPath = result.filePaths[0];
+  client?.close(); client = null;
+  persist(); publish(); refresh();
 }
 
 function updateTray() {
   if (!tray || tray.isDestroyed()) return;
   const q = state.quota;
-  const label = `5h ${q?.short ? Math.round(q.short.remaining) + '%' : '—'} · 7d ${q?.weekly ? Math.round(q.weekly.remaining) + '%' : '—'}`;
-  tray.setToolTip(`Codex Quota · ${label}${state.error ? choose(' · 更新失败', ' · update failed') : ''}`);
-  if (process.platform === 'darwin') tray.setTitle(settings.systemBarEnabled ? `5h ${q?.short ? Math.round(q.short.remaining) + '%' : '—'}  7d ${q?.weekly ? Math.round(q.weekly.remaining) + '%' : '—'}${state.error ? ' •' : ''}` : '', { fontType: 'monospacedDigit' });
+  const parts = [['short', '5h'], ['weekly', '7d']].filter(([key]) => settings.display[key]).map(([key, name]) => {
+    const percent = quotaDisplay.percent(q?.[key]?.remaining);
+    return name + ' ' + (percent == null ? '—' : percent + '%');
+  });
+  tray.setToolTip(['Codex Quota', ...parts, ...(state.error ? [choose('更新失败', 'Update failed')] : [])].join(' · '));
+  if (process.platform === 'darwin') {
+    tray.setTitle(settings.systemBarEnabled ? parts.join('  ') : '', { fontType: 'monospacedDigit' });
+  }
+}
+function updateDisplay(key, value) {
+  const display = settings.display;
+  if (['sidebar', 'short', 'weekly', 'credits', 'resets'].includes(key) && typeof value === 'boolean') display[key] = value;
+  else if (key === 'accent' && typeof value === 'string' && Object.hasOwn(quotaDisplay.colors, value)) display.accent = value;
+  else if (key === 'region' && Array.isArray(value)) {
+    const [region, field, setting] = value;
+    if (!quotaDisplay.regions.includes(region)) return;
+    if (field === 'color' && typeof setting === 'string' && (setting === 'auto' || Object.hasOwn(quotaDisplay.colors, setting))) display.regions[region].color = setting;
+    else if (['font', 'ring'].includes(field) && Number.isInteger(setting) && setting >= 0 && setting < quotaDisplay.sizes.length) display.regions[region][field] = setting;
+    else return;
+  } else return;
+  if (!display.short && !display.weekly && settings.systemBarEnabled && process.platform === 'win32') {
+    for (const item of barWindows.values()) item.win.hide();
+    state.systemBarReason = 'content-hidden';
+  }
+  persist(); publish(true);
 }
 
 async function smokeTest() {
@@ -344,31 +445,41 @@ async function smokeTest() {
   win.showInactive(); await evaluate("document.querySelector('#hide').click()"); await settle();
   assert.equal(win.isVisible(), false); show(); assert.equal(win.isVisible(), true);
   checks.push('hide to tray and restore');
-  assert.ok(Menu.buildFromTemplate(menuItems()).items.some(item => item.label === '任务栏显示额度' || item.label === '菜单栏显示额度'));
-  checks.push('native tray menu constructs');
+  assert.deepEqual(Menu.buildFromTemplate(menuItems()).items.map(item => item.label), ['设置', '退出']);
+  checks.push('native taskbar and tray use a menu with only settings and quit');
   if (process.platform === 'darwin') { assert.match(tray.getTitle(), /5h 64%.*7d 28%/); checks.push('macOS menu bar title contains both remaining quotas'); }
   settings.language = 'en'; publish(); await settle();
   assert.equal(await evaluate("document.querySelector('#short-title').textContent"), '5 hours');
   checks.push('English language');
-  const fixtureBar = new BrowserWindow({ width: 178, height: 32, show: false, frame: false, transparent: true, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  const fixtureBar = new BrowserWindow({ width: 56, height: 36, show: false, frame: false, transparent: true, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
   barWindows.set('fixture', { win: fixtureBar });
   await fixtureBar.loadFile(path.join(__dirname, 'bar.html')); publish(); await settle();
   assert.equal(await fixtureBar.webContents.executeJavaScript("document.querySelector('#short').textContent"), '64%');
   assert.equal(await fixtureBar.webContents.executeJavaScript("document.querySelector('#weekly').textContent"), '28%');
+  assert.equal(await fixtureBar.webContents.executeJavaScript(`(() => {
+    const [a, b] = document.querySelectorAll('.item');
+    const track = a.querySelector('.track'), fill = a.querySelector('.fill');
+    return a.getBoundingClientRect().bottom < b.getBoundingClientRect().top && Math.abs(fill.offsetWidth / track.offsetWidth - .64) < .03;
+  })()`), true);
   fs.writeFileSync(path.join(out, 'taskbar.png'), (await fixtureBar.webContents.capturePage()).toPNG());
-  fixtureBar.setSize(80, 36); barWindows.get('fixture').compact = true; publish(); await settle();
-  assert.equal(await fixtureBar.webContents.executeJavaScript("document.body.classList.contains('compact')"), true);
-  fs.writeFileSync(path.join(out, 'taskbar-compact.png'), (await fixtureBar.webContents.capturePage()).toPNG());
-  checks.push('narrow taskbar renders stacked quotas without covering system widgets');
-  fixtureBar.setSize(48, 36); barWindows.get('fixture').tiny = true; state.quota.short.remaining = 100; publish(); await settle();
+  fixtureBar.setSize(36, 36); state.quota.short.remaining = 100; publish(); await settle();
   assert.equal(await fixtureBar.webContents.executeJavaScript("document.querySelector('#short').textContent"), '100%');
   assert.equal(await fixtureBar.webContents.executeJavaScript("document.querySelector('#bar').scrollWidth <= document.querySelector('#bar').clientWidth"), true);
+  assert.deepEqual(await fixtureBar.webContents.executeJavaScript("[...document.querySelectorAll('#bar strong')].map(node => node.id)"), ['short', 'weekly']);
+  settings.display.weekly = false; publish(); await settle();
+  assert.deepEqual(await fixtureBar.webContents.executeJavaScript("[...document.querySelectorAll('#bar .item:not([hidden]) strong')].map(node => node.id)"), ['short']);
+  assert.equal(await fixtureBar.webContents.executeJavaScript(`(() => {
+    const card = document.querySelector('#bar').getBoundingClientRect(), row = document.querySelector('.item').getBoundingClientRect();
+    return Math.abs(card.top + card.bottom - row.top - row.bottom) < 2;
+  })()`), true);
+  fs.writeFileSync(path.join(out, 'taskbar-single.png'), (await fixtureBar.webContents.capturePage()).toPNG());
+  settings.display.weekly = true; publish(); await settle();
   fs.writeFileSync(path.join(out, 'taskbar-tiny.png'), (await fixtureBar.webContents.capturePage()).toPNG());
   state.quota.short.remaining = 64; publish(); await settle();
-  checks.push('smallest taskbar style fits full and zero quota without horizontal overflow');
+  checks.push('taskbar progress fills match the quotas, including centered single-period and narrow layouts');
   await fixtureBar.webContents.executeJavaScript("document.querySelector('#bar').click()"); await settle();
   assert.equal(popover, true); assert.equal(win.getBounds().height, PANEL_HEIGHT);
-  checks.push('taskbar quota rings and click-to-open details');
+  checks.push('taskbar click-to-open details');
   await fixtureBar.webContents.executeJavaScript("document.querySelector('#bar').click()"); await settle();
   assert.equal(popover, false);
   checks.push('clicking the taskbar quota again closes details');
@@ -384,6 +495,31 @@ async function smokeTest() {
   assert.equal(await readConfig("document.querySelectorAll('#chart .column').length"), 31);
   await readConfig("document.querySelector('[data-setting=composer]').click()"); await settle();
   assert.equal(settings.composerEnabled, true);
+  await readConfig("document.querySelector('[data-setting=weekly]').click(); document.querySelector('[data-color=blue]').click();");
+  await settle();
+  assert.equal(await evaluate("document.querySelector('#weekly-ring').closest('.quota-row').hidden"), true);
+  assert.equal(await evaluate("document.querySelector('#short-ring').closest('.quota-row').hidden"), false);
+  assert.equal(await evaluate("document.querySelector('#saved-resets').hidden"), false);
+  assert.equal(settings.display.accent, 'blue');
+  await readConfig(`(() => {
+    const select = document.querySelector('#region'); select.value = 'floating'; select.dispatchEvent(new Event('change'));
+    const slider = document.querySelector('#region-ring'); slider.value = 4; slider.dispatchEvent(new Event('input'));
+    document.querySelector('[data-setting=weekly]').click();
+  })()`);
+  await settle();
+  assert.ok(Math.abs(await evaluate("parseFloat(getComputedStyle(document.querySelector('#short-ring')).width)") - 57.2) < .1);
+  assert.equal(settings.display.weekly, true);
+  assert.deepEqual(await readConfig(`(() => {
+    const header = document.querySelector('header'), main = document.querySelector('main'), top = header.getBoundingClientRect().top;
+    main.scrollTop = main.scrollHeight;
+    const result = [main.scrollTop > 0, header.getBoundingClientRect().top === top];
+    main.scrollTop = 0;
+    return result;
+  })()`), [true, true]);
+  await readConfig("document.querySelector('#language').value='en'; document.querySelector('#language').dispatchEvent(new Event('change'))");
+  await settle();
+  assert.equal(await readConfig("document.querySelector('#preferences-title').textContent"), 'General settings');
+  await readConfig("document.querySelector('#language').value='zh'; document.querySelector('#language').dispatchEvent(new Event('change'))");
   await readConfig("document.querySelector('[data-period=today]').click()"); await settle();
   fs.writeFileSync(path.join(out, 'settings.png'), (await config.webContents.capturePage()).toPNG());
   config.close();
@@ -403,6 +539,10 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) app.quit();
 else {
   app.on('second-instance', (_event, argv) => {
+    if (argv.includes('--launch-codex') && !windowLoaded) {
+      pendingDesktopLaunch = true;
+      return;
+    }
     if (!win) return;
     if (argv.includes('--quit')) quit();
     else if (argv.includes('--composer-on')) setComposer(true);
@@ -414,7 +554,7 @@ else {
     else if (argv.includes('--save-previews')) savePreviews().catch(() => {});
     else if (argv.includes('--hide')) hide();
     else if (argv.includes('--toggle')) toggle();
-    else show();
+    else if (argv.includes('--show')) show();
   });
   app.whenReady().then(async () => {
     if (process.argv.includes('--quit') || process.argv.includes('--hide')) { quit(); return; }
@@ -448,7 +588,7 @@ else {
     });
     screen.on('display-removed', () => { win.setBounds(position()); persist(); });
     screen.on('display-metrics-changed', () => { win.setBounds(position()); });
-    ipcMain.handle('quota:state', event => { const item = [...barWindows.values()].find(item => item.win.webContents === event.sender); return item ? barSnapshot(item) : snapshot(); });
+    ipcMain.handle('quota:state', () => snapshot());
     ipcMain.handle('quota:settings-state', event => event.sender === settingsWindow?.webContents ? settingsSnapshot() : null);
     ipcMain.handle('quota:settings-usage', async event => {
       if (event.sender !== settingsWindow?.webContents) return null;
@@ -460,11 +600,41 @@ else {
       if (key === 'close') settingsWindow.close();
       else if (key === 'official') openOfficialUsage();
       else if (key === 'launch' && !smoke) launchCodex();
-      else if (key === 'theme' && ['system','light','dark'].includes(value)) { settings.theme = value; nativeTheme.themeSource = value; persist(); publish(); }
+      else if (key === 'refresh') refresh();
+      else if (key === 'choose-executable' && !smoke) chooseExecutable().catch(() => {});
+      else if (key === 'toggle-floating') {
+        if (win.isVisible() && !popover) hide(); else show();
+      }
+      else if (key === 'reset-position') {
+        settings.position = null;
+        if (!popover) win.setBounds(position());
+        persist(); publish();
+      }
+      else if (key === 'theme' && ['system','light','dark'].includes(value)) { settings.theme = value; nativeTheme.themeSource = value; persist(); publish(true); }
+      else if (key === 'language' && ['zh', 'en'].includes(value)) { settings.language = value; persist(); publish(true); }
+      else if (key === 'opacity' && [0.65, 0.8, 1].includes(value)) {
+        settings.opacity = value;
+        if (!popover) win.setOpacity(value);
+        persist(); publish();
+      }
+      else if (key === 'interval' && [30, 60, 120].includes(value)) {
+        settings.interval = value;
+        persist(); publish(); refresh();
+      }
+      else if (typeof key === 'string' && key.startsWith('display:')) updateDisplay(key.slice(8), value);
       else if (typeof value === 'boolean') {
         if (key === 'composer') setComposer(value);
         else if (key === 'bar') setSystemBar(value);
         else if (key === 'floating') setFloating(value);
+        else if (key === 'compact') setCompact(value);
+        else if (key === 'topmost') {
+          settings.topmost = value;
+          if (!popover) win.setAlwaysOnTop(value, 'floating');
+          persist(); publish();
+        } else if (key === 'launchAtLogin' && app.isPackaged) {
+          app.setLoginItemSettings({ openAtLogin: value, args: ['--background'] });
+          publish();
+        }
       }
     });
     ipcMain.on('quota:action', (event, action) => {
@@ -473,7 +643,7 @@ else {
         if (action === 'details') togglePopover(barItem.win.getBounds());
         else if (action === 'preview') openPopover(barItem.win.getBounds(), true);
         else if (action === 'leave') closePreviewLater();
-        else if (action === 'menu') Menu.buildFromTemplate(menuItems()).popup();
+        else if (action === 'menu') openContextMenu();
         return;
       }
       if (event.sender !== win.webContents) return;
@@ -486,21 +656,22 @@ else {
     if (process.platform === 'darwin') trayIcon.setTemplateImage(true);
     tray = new Tray(trayIcon);
     tray.on('click', (_event, bounds) => togglePopover(bounds || tray.getBounds()));
-    tray.on('right-click', () => Menu.buildFromTemplate(menuItems()).popup());
+    tray.on('right-click', openContextMenu);
     updateTray();
     const shortcut = globalShortcut.register('CommandOrControl+Shift+Q', toggle);
     state.shortcutAvailable = shortcut;
     powerMonitor.on('resume', () => refresh());
     nativeTheme.on('updated', publish);
     await win.loadFile(path.join(__dirname, 'index.html'));
+    windowLoaded = true;
     if (smoke) await smokeTest();
     else {
-      if (process.argv.includes('--show') || settings.floatingEnabled) show();
+      if (showOnStartup || settings.floatingEnabled) show();
       setSystemBar(settings.systemBarEnabled);
       refresh();
       startBridge();
       if (process.argv.includes('--settings')) await openSettings();
-      if (process.argv.includes('--launch-codex')) await launchCodex();
+      if (pendingDesktopLaunch) await launchCodex();
     }
   }).catch(error => {
     if (smoke) { fs.writeFileSync(path.join(process.env.CODEX_QUOTA_TEST_DIR, 'failure.txt'), error.stack); process.exitCode = 1; }
@@ -508,7 +679,7 @@ else {
     quitting = true; app.exit(1);
   });
   app.on('before-quit', event => {
-    quitting = true; clearTimeout(timer); clearTimeout(saveTimer); clearTimeout(popupCloseTimer); taskbarWatcher?.stop(); client?.close(); globalShortcut.unregisterAll();
+    quitting = true; clearTimeout(timer); clearTimeout(saveTimer); clearTimeout(popupCloseTimer); clearTimeout(taskbarRecoveryTimer); taskbarWatcher?.stop(); client?.close(); globalShortcut.unregisterAll();
     if (bridge && !cleanupComplete) {
       event.preventDefault();
       if (!cleanupInFlight) { cleanupInFlight = true; bridge.stop().finally(() => { cleanupComplete = true; app.quit(); }); }

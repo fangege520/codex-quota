@@ -32,7 +32,7 @@ try {
   });
   console.log('\nPlugin installed. Restart Codex if it is not listed yet.');
   console.log(`Installed plugin directory: ${installedPath}`);
-  if (process.platform === 'win32') run(process.execPath, [path.join(installedPath, 'scripts', 'manage.cjs'), 'create-launcher']);
+  run(process.execPath, [path.join(installedPath, 'scripts', 'manage.cjs'), 'create-launcher']);
   run(process.execPath, [path.join(installedPath, 'scripts', 'manage.cjs'), 'check']);
   if (!process.argv.includes('--no-start')) run(process.execPath, [path.join(installedPath, 'scripts', 'manage.cjs'), 'start']);
 } catch (error) { console.error(error.message); process.exitCode = 1; }

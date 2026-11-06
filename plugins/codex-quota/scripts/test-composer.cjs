@@ -36,7 +36,11 @@ async function main() {
     };
     await until(async () => (await evaluate("document.readyState === 'complete' && !!document.querySelector('#prompt')")) === true, 'fixture DOM readiness');
     const original = await evaluate("document.querySelector('#prompt').textContent");
-    bridge = new ComposerBridge({ port, targetFilter: t => t.type === 'page' && t.url.includes('codex-quota-fixture.html'), threadUsage: async id => id.endsWith('0001') ? { total:32100,input:30000,output:2100,cached:12000,reasoning:500 } : null });
+    bridge = new ComposerBridge({
+      port, targetFilter: t => t.type === 'page' && t.url.includes('codex-quota-fixture.html'),
+      threadUsage: async id => id.endsWith('0001') ? { total:58910193,input:58638547,output:271646,cached:57459968,reasoning:113638 } : null,
+      turnUsage: async ids => Object.fromEntries(ids.filter(id => id.endsWith('0002')).map(id => [id, { total: 217360, effort: 'high' }]))
+    });
     let settingsOpened = 0, officialOpened = 0; bridge.on('settings', () => settingsOpened++); bridge.on('official', () => officialOpened++);
     const state = { demo: true, settings: { language: 'zh' }, quota: { plan:'plus', credits:{balance:'120.5'}, resets:{count:2,cards:[{expiresAt:Date.now()+86400000},{expiresAt:Date.now()+172800000}]}, fetchedAt: Date.now(), short: { remaining: 86, resetsAt: Date.now() + 12000000 }, weekly: { remaining: 26, resetsAt: Date.now() + 170000000 } } };
     bridge.update(state); bridge.start();
@@ -44,10 +48,43 @@ async function main() {
     assert.equal(bridge.status.targets, 1); checks.push('only the intended workspace target receives the strip');
     const values = await evaluate("[...document.querySelector('#codex-quota-composer-v1').shadowRoot.querySelectorAll('.value')].map(n=>n.textContent)");
     assert.deepEqual(values, ['86%', '26%']); checks.push('real CDP evaluates the owned widget and displays live payload');
+    const composer = "document.querySelector('#codex-quota-composer-v1').shadowRoot";
+    assert.equal(await evaluate(composer + ".querySelectorAll('.ring').length"), 2);
+    assert.equal(await evaluate(composer + ".querySelector('.resets b').textContent"), '2');
+    assert.equal(await evaluate(composer + ".querySelector('.credits b').textContent"), '120');
     const rail = "document.querySelector('#codex-quota-rail-v1').shadowRoot";
+    const readRail = () => evaluate(`(() => {
+      const root = ${rail}, stack = root.querySelector('.stack');
+      return {
+        scheme: getComputedStyle(stack).colorScheme,
+        surface: getComputedStyle(stack).backgroundColor,
+        rings: [...root.querySelectorAll('.limit')].map(button => {
+          const fill = button.querySelector('.ring-fill');
+          return {
+            text: button.querySelector('b').textContent,
+            stroke: getComputedStyle(fill).stroke,
+            dash: fill.getAttribute('stroke-dasharray'),
+            visibility: getComputedStyle(fill).visibility
+          };
+        })
+      };
+    })()`);
     await until(() => bridge.status.sidebarVisible === 1, 'sidebar quota injection');
     assert.equal(await evaluate(rail+".querySelector('.plan').textContent"), 'Plus');
     assert.equal(await evaluate(rail+".querySelector('.resets b').textContent"), '2');
+    state.settings.display = { weekly: false, credits: false };
+    bridge.preview(state);
+    await until(async () => (await evaluate(composer + ".querySelector('.weekly').closest('.window').hidden")) === true, 'hide weekly quota independently');
+    assert.equal(await evaluate(composer + ".querySelector('.short').closest('.window').hidden"), false);
+    assert.equal(await evaluate(composer + ".querySelector('.credits').hidden"), true);
+    await until(async () => (await evaluate(`${rail}.querySelector('.weekly').hidden && ${rail}.querySelector('.credits').hidden`)) === true, 'hide sidebar weekly quota and credits');
+    delete state.settings.display; bridge.preview(state);
+    await until(async () => (await evaluate(rail + ".querySelector('.weekly').hidden")) === false, 'restore weekly quota');
+    assert.match(await evaluate(rail+".querySelector('.short .reset').textContent"), /^\d{2}:\d{2}$/);
+    assert.deepEqual(await evaluate("[..."+rail+".querySelectorAll('.weekly .reset span')].map(node=>node.textContent)"), [
+      new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(state.quota.weekly.resetsAt),
+      new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(state.quota.weekly.resetsAt)
+    ]);
     assert.equal(await evaluate("(()=>{const r=window.__codexQuotaRailV1.status().bounds,n=document.querySelector('[data-app-navigation-rail]').getBoundingClientRect();return r.x+r.width<=n.right&&r.y+r.height<document.querySelector('#native-profile').getBoundingClientRect().top})()"), true);
     assert.equal(await evaluate("document.querySelector('#codex-quota-composer-v1').shadowRoot.querySelector('.settings')"), null);
     await evaluate("window.__codexQuotaActionV2('arbitrary-command')"); await pause(100);
@@ -59,28 +96,80 @@ async function main() {
     assert.match(await evaluate(rail+".querySelector('.panel').textContent"), /到期/);
     await pause(550); await evaluate(rail+".querySelector('.official').click()");
     await until(() => officialOpened === 1, 'official reset page action');
-    await evaluate("document.querySelector('.demo-thread').dispatchEvent(new PointerEvent('pointerover',{bubbles:true}))");
-    await until(async () => (await evaluate(rail+".querySelector('.panel').textContent")).includes('32,100'), 'thread tokens on hover');
+    const turnBadge = rail + ".querySelector('.turn-badge:not([hidden])')";
+    await until(async () => (await evaluate(turnBadge + '?.textContent')) === '≈21.7万 Token · 推理 高', 'turn usage and reasoning effort are anchored to the duration row');
+    assert.match(await evaluate(turnBadge + '.title'), /217,360 Token\n推理强度 · high/);
+    assert.equal(await evaluate(`(() => {
+      const badge = ${rail}.querySelector('.turn-badge');
+      const button = document.querySelector('[data-turn-key] button');
+      const gap = badge.getBoundingClientRect().left - button.getBoundingClientRect().right;
+      return gap >= 8 && gap < 9;
+    })()`), true);
+    await evaluate(`(() => {
+      const thread = document.querySelector('.demo-thread'), r = thread.getBoundingClientRect();
+      const tooltip = document.createElement('div'); tooltip.id = 'native-tooltip'; tooltip.setAttribute('role', 'tooltip');
+      tooltip.style.cssText = 'position:fixed;width:280px;height:65px;left:' + (r.right + 4) + 'px;top:' + (r.top - 40) + 'px;';
+      document.body.append(tooltip);
+      thread.dispatchEvent(new PointerEvent('pointerover', {bubbles:true}));
+    })()`);
+    await until(async () => (await evaluate(rail+".querySelector('.panel .big')?.textContent")) === '≈5891万', 'thread tokens on hover');
+    assert.match(await evaluate(rail+".querySelector('.panel .exact').textContent"), /58,910,193/);
+    assert.equal(await evaluate(`(() => {
+      const p = ${rail}.querySelector('.panel'), a = p.getBoundingClientRect(), b = document.querySelector('#native-tooltip').getBoundingClientRect();
+      return getComputedStyle(p).visibility === 'visible' && (a.right <= b.left || a.left >= b.right || a.bottom <= b.top || a.top >= b.bottom);
+    })()`), true);
     await evaluate("document.querySelector('.demo-thread').dispatchEvent(new PointerEvent('pointerout',{bubbles:true}))");
     await until(async () => (await evaluate(rail+".querySelector('.panel').hidden")) === true, 'thread hover dismissed');
-    checks.push('reset expiry list and local thread hover do not change native content');
+    await evaluate("document.querySelector('#native-tooltip').remove()");
+    checks.push('thread hover avoids the native tooltip and the duration row shows its token usage and reasoning effort');
     const layout = await evaluate("(()=>{const strip=document.querySelector('#codex-quota-composer-v1').getBoundingClientRect(),anchor=document.querySelector('[data-codex-intelligence-trigger]').getBoundingClientRect(),left=document.querySelector('#permissions').getBoundingClientRect();return {left:strip.left,right:strip.right,modelLeft:anchor.left,permissionRight:left.right}})()");
     assert(layout.right < layout.modelLeft); assert(layout.left > layout.permissionRight); checks.push('strip fits in empty space left of model picker without covering controls');
     assert.equal(await evaluate("document.querySelector('#prompt').textContent"), original);
     await evaluate("document.querySelector('#send').click()"); assert.equal(await evaluate('window.sentCount'), 1);
     checks.push('editor content and native send action remain functional');
-    // Hidden Windows CI windows may not deliver a compositor frame. The
-    // preview is optional; the geometry, interaction and reload checks are not.
-    try {
-      const screenshot = await inspector.call('Page.captureScreenshot', { format: 'png' });
-      fs.writeFileSync(path.join(out, 'composer-preview.png'), Buffer.from(screenshot.data, 'base64'));
-    } catch (error) {
-      if (error.message !== 'CDP_TIMEOUT') throw error;
-      console.warn('Fixture preview frame timed out; continuing functional checks.');
-    }
+    // A hidden CI window may not deliver a compositor frame. Only the previews are optional.
+    const preview = async name => {
+      try {
+        const screenshot = await inspector.call('Page.captureScreenshot', { format: 'png' });
+        fs.writeFileSync(path.join(out, name + '.png'), Buffer.from(screenshot.data, 'base64'));
+      } catch (error) {
+        if (error.message !== 'CDP_TIMEOUT') throw error;
+        console.warn('Fixture preview frame timed out; continuing functional checks.');
+      }
+    };
+    await inspector.call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] });
+    await evaluate("document.documentElement.dataset.theme = 'dark'");
+    await until(async () => (await readRail()).scheme === 'dark', 'follow Codex dark appearance despite light OS');
+    state.quota.short.remaining = 100; state.quota.weekly.remaining = 50; bridge.update(state);
+    const dark = await until(async () => { const r = await readRail(); return r.rings[0].text === '100%' && r; }, 'dark status rings');
+    assert.equal(dark.surface, 'rgb(37, 38, 41)');
+    assert.deepEqual(dark.rings, [
+      { text: '100%', stroke: 'rgb(0, 200, 150)', dash: null, visibility: 'visible' },
+      { text: '50%', stroke: 'rgb(241, 199, 91)', dash: '50 100', visibility: 'visible' }
+    ]);
+    await preview('composer-preview-dark');
+    state.settings.theme = 'light'; state.quota.short.remaining = 20; state.quota.weekly = null; bridge.update(state);
+    const light = await until(async () => { const r = await readRail(); return r.scheme === 'light' && r.rings[0].text === '20%' && r; }, 'explicit light appearance overrides Codex dark');
+    assert.equal(light.surface, 'rgb(242, 243, 245)');
+    assert.deepEqual(light.rings, [
+      { text: '20%', stroke: 'rgb(194, 50, 66)', dash: '20 100', visibility: 'visible' },
+      { text: '—', stroke: 'rgb(84, 92, 102)', dash: null, visibility: 'hidden' }
+    ]);
+    const weeklyTrack = () => evaluate("getComputedStyle("+rail+".querySelector('.weekly .ring-track')).stroke");
+    const unknownTrack = await weeklyTrack();
+    await preview('composer-preview');
+    state.settings.display = { accent: 'blue' };
+    bridge.preview(state);
+    await until(async () => (await evaluate("getComputedStyle("+rail+".querySelector('.turn-badge')).color")) === 'rgb(36, 84, 198)', 'turn label follows the selected theme');
+    delete state.settings.display;
+    delete state.settings.theme;
+    await evaluate('delete document.documentElement.dataset.theme');
+    checks.push('theme controls turn text and healthy quota colors while warning and unavailable colors remain distinct');
     // A second install and repeated heartbeats must not create duplicate widgets.
-    state.quota.short.remaining = 71; state.quota.weekly.remaining = 0; bridge.update(state);
+    state.quota.short.remaining = 71; state.quota.weekly = { remaining: 0, resetsAt: Date.now() + 170000000 }; bridge.update(state);
     await until(async () => (await evaluate("document.querySelector('#codex-quota-composer-v1')?.shadowRoot.querySelector('.weekly').textContent")) === '0%', 'quota refresh');
+    assert.deepEqual((await readRail()).rings[1], { text: '0%', stroke: 'rgb(194, 50, 66)', dash: null, visibility: 'hidden' });
+    assert.notEqual(await weeklyTrack(), unknownTrack);
     assert.equal(await evaluate("document.querySelectorAll('#codex-quota-composer-v1').length"), 1);
     checks.push('refresh preserves zero quota and avoids duplicate widgets');
     const previousY = await evaluate('window.__codexQuotaComposerV1.status().bounds.y');
@@ -97,6 +186,15 @@ async function main() {
     checks.push('narrow windows hide the strip instead of overlapping native controls');
     await inspector.call('Emulation.clearDeviceMetricsOverride');
     await until(async () => (await evaluate('window.__codexQuotaComposerV1.status().visible')) === true, 'restore width');
+    const railStatus = 'window.__codexQuotaRailV1.status()';
+    for (const [height, mode] of [[245, 'compact'], [150, 'gear-only']]) {
+      await inspector.call('Emulation.setDeviceMetricsOverride', { width: 1440, height, deviceScaleFactor: 1, mobile: false });
+      await until(async () => (await evaluate(railStatus)).mode === 'stack ' + mode, 'sidebar ' + mode);
+      assert.equal(await evaluate(`(() => { const r = ${railStatus}.bounds; return r.y > document.querySelector('#native-home').getBoundingClientRect().bottom && r.y + r.height < document.querySelector('#native-profile').getBoundingClientRect().top; })()`), true);
+    }
+    await inspector.call('Emulation.clearDeviceMetricsOverride');
+    await until(async () => (await evaluate(railStatus)).mode === 'stack full', 'restore full sidebar');
+    checks.push('short windows use compact rings or keep only settings without covering navigation');
     await inspector.call('Page.reload');
     await until(async () => (await evaluate('window.__codexQuotaComposerV1?.status().visible')) === true, 'page reload');
     assert.equal(await evaluate("document.querySelectorAll('#codex-quota-composer-v1').length"), 1); checks.push('page reload restores a single widget');

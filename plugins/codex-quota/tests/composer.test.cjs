@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { validPort, isWorkspaceTarget, validSocket, displayPayload, listTargets } = require('../lib/composer.cjs');
+const { validPort, isWorkspaceTarget, validSocket, displayPayload, listTargets, ComposerBridge } = require('../lib/composer.cjs');
+const { normalize } = require('../desktop/display.js');
 test('CDP connection is restricted to a local page websocket and valid port', () => {
   assert.equal(validPort(9339), true); assert.equal(validPort(80), false); assert.equal(validPort('9339'), false);
   assert.equal(validSocket('ws://127.0.0.1:9339/devtools/page/ABC', 9339), true);
@@ -15,7 +16,21 @@ test('only native workspace pages are eligible, excluding web tabs and pets', ()
 });
 test('renderer payload contains only whitelisted display data', () => {
   const value = displayPayload({ quota: { short: { remaining: 71, resetsAt: 1234, token: 'secret' }, weekly: { remaining: 0 }, fetchedAt: 100, accountId: 'private' }, error: 'PRIVATE SERVER ERROR', settings: { language: 'en', codexPath: '/private' }, email: 'private' });
-  assert.deepEqual(value, { short: { remaining: 71, resetsAt: 1234 }, weekly: { remaining: 0, resetsAt: null }, fetchedAt: 100, error: true, language: 'en', demo: false });
+  assert.deepEqual(value, { short: { remaining: 71, resetsAt: 1234 }, weekly: { remaining: 0, resetsAt: null }, fetchedAt: 100, error: true, language: 'en', demo: false, theme: 'system', display: normalize(), resetCount: null, credits: null });
+  const migrated = displayPayload({ settings: { display: { quota: false, weekly: true, credits: false } } }).display;
+  assert.deepEqual([migrated.short, migrated.weekly, migrated.credits], [false, true, false]);
   assert.equal(displayPayload({ quota: { short: { remaining: null } } }).short, null);
 });
 test('invalid port is rejected before any connection attempt', async () => { await assert.rejects(listTargets(65536), /INVALID_CDP_PORT/); });
+test('launch confirmation requires a fresh workspace connection', async () => {
+  const bridge = new ComposerBridge({ source: 'fixture' });
+  bridge.report({ phase: 'connected' });
+  const failed = bridge.waitForConnection(5);
+  bridge.report({ phase: 'attach-failed' });
+  assert.equal(await failed, false);
+
+  const connected = bridge.waitForConnection();
+  bridge.report({ phase: 'connected' });
+  assert.equal(await connected, true);
+  assert.equal(bridge.listenerCount('status'), 0);
+});

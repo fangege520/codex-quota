@@ -4,11 +4,11 @@
 
 如果是更新已安装的版本，**先通过额度助手的托盘菜单退出它**，或使用旧版管理脚本的 `stop` 命令，等进程退出再操作插件缓存。Windows 会锁定运行中的 Electron 文件，直接替换缓存可能失败。这里只退出额度助手，不需要退出 Codex。
 
-1. 记录仓库绝对路径，并确认 Node.js ≥22.12、npm 和官方 Codex CLI 可用。可优先使用 Codex 提供的现代 Node 运行时；不要为了此插件改动用户的全局 Node 版本。
-2. 在仓库根目录运行 `node install.cjs`。脚本添加本仓库的插件源、安装 `codex-quota@codex-quota-marketplace`、在 Codex 返回的 `installedPath` 中下载运行依赖、验证真实额度并启动。现有插件源由 Codex CLI 自行合并，不手动覆盖用户的 `marketplace.json` 或 `config.toml`。如只需安装和额度检查，可用 `node install.cjs --no-start`。
+1. 下载或克隆仓库，保留仓库目录以便后续升级。确认 Node.js ≥22.12、npm 和支持 `codex plugin` 的官方 Codex CLI 可用。优先使用 Codex 提供的现代 Node 运行时。
+2. 在仓库根目录运行 `node install.cjs`。脚本添加本仓库的插件源、安装 `codex-quota@codex-quota-marketplace`、在 Codex 返回的 `installedPath` 中下载运行依赖，然后创建助手入口和启动联动、验证真实额度并启动助手。现有插件源由 Codex CLI 自行合并。如需跳过本次立即启动，使用 `node install.cjs --no-start`，之后打开 ChatGPT 仍会拉起助手。
 3. 如果账户未登录，引导用户通过官方 `codex login` 登录自己的 ChatGPT 账户，然后在脚本输出的实际安装目录中运行 `node scripts/manage.cjs check` 和 `node scripts/manage.cjs start`。不要读取、展示或上传认证文件。后续管理优先读取已安装插件的 skill，使用其绝对路径。
-4. Windows 安装会创建 **Codex（用量助手）** 桌面和开始菜单入口。请在现有任务完成后完全退出普通 Codex，再使用新入口；助手会自动启动并连接左栏。macOS 使用助手托盘里的启动项。普通 Codex 图标不会启用左栏连接。托盘「用量助手设置」可随时打开居中配置。
+4. 安装后先看 Windows 任务栏或 macOS 菜单栏的额度。要显示 Codex 左栏，等当前任务完成，正常退出 Codex，再从专用入口打开。Windows 使用桌面或开始菜单的 **Codex（用量助手）**，macOS 使用 Finder 的 `~/Applications/Codex Quota.app`。如需输入框额度条或桌面悬浮框，在用量助手设置中开启对应开关。
 
-安装脚本只注册本仓库并安装本插件，不发布仓库、不打开开机自启、不替换用户现有账户。不要添加定时 AI 任务来刷新额度。
+Windows 使用当前用户的客户端启动事件，macOS 使用当前用户的 LaunchAgent 监听客户端启动。卸载插件前，在实际安装目录运行 `node scripts/manage.cjs stop`，等助手退出后运行 `node scripts/manage.cjs remove-launcher` 清理入口和联动。
 
 有官方 Codex CLI 但无法自动定位时：设置 `CODEX_QUOTA_CODEX_BIN` 为原生可执行文件的绝对路径。Windows 使用 `codex.exe`，不传入 `.cmd` 包装脚本。macOS 可以使用 PATH 上的 `codex` 可执行脚本。

@@ -30,17 +30,21 @@ async function main() {
     } finally { client.close(); }
     return;
   }
+  const source = path.resolve(__dirname, '..');
+  if (action === 'remove-launcher') {
+    require('../lib/launcher.cjs').configureLauncher();
+    console.log('Assistant shortcuts and ChatGPT startup integration removed.');
+    return;
+  }
   if (!['start', 'show', 'hide', 'toggle', 'stop', 'composer-on', 'composer-off', 'system-bar-on', 'system-bar-off', 'snapshot', 'launch-codex', 'settings', 'create-launcher'].includes(action)) throw new Error('Unknown management action: ' + action);
-  const runtime = require('../lib/runtime.cjs').prepareRuntime(path.resolve(__dirname, '..'));
+  const runtime = require('../lib/runtime.cjs').prepareRuntime(source);
+  if (action === 'create-launcher') {
+    console.log(JSON.stringify(require('../lib/launcher.cjs').configureLauncher(runtime)));
+    return;
+  }
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
   const flags = { start: [], show: ['--show'], hide: ['--hide'], toggle: ['--toggle'], stop: ['--quit'], 'composer-on': ['--composer-on'], 'composer-off': ['--composer-off'], 'system-bar-on': ['--system-bar-on'], 'system-bar-off': ['--system-bar-off'], snapshot: ['--save-previews'], 'launch-codex': ['--launch-codex'], settings: ['--settings'] }[action];
-  if (action === 'create-launcher') {
-    if (process.platform !== 'win32') throw new Error('Use launch-codex on macOS.');
-    const created = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(runtime.app, 'lib', 'create-windows-launcher.ps1'), '-Executable', runtime.electron, '-Runtime', runtime.app, '-ShortcutName', 'Codex（用量助手）'], { encoding: 'utf8', windowsHide: true, timeout: 10000, env });
-    if (created.status !== 0) throw new Error('Could not create the Windows launcher: ' + (created.stderr || created.error?.message || 'unknown error').trim());
-    console.log(created.stdout.trim()); return;
-  }
   if (process.platform === 'win32') {
     const launch = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(runtime.app, 'lib', 'start-windows-runtime.ps1'), '-Executable', runtime.electron, '-Runtime', runtime.app, '-Action', action], { encoding: 'utf8', windowsHide: true, timeout: 20000, env });
     if (launch.status !== 0) throw new Error(`COMPANION_LAUNCH_FAILED: ${(launch.stderr || launch.error?.message || '').trim().slice(0, 400)}`);

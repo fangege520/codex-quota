@@ -6,10 +6,11 @@ const THREAD_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const DAY = 86400000;
 const counts = { total: 'total_tokens', input: 'input_tokens', cached: 'cached_input_tokens', output: 'output_tokens', reasoning: 'reasoning_output_tokens' };
 const hourKey = date => `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}/${date.getHours()}`;
+const normalizeEffort = value => typeof value === 'string' && /^[a-z][a-z0-9_-]{0,23}$/.test(value) ? value : null;
 
 function record(index, line, now) {
   // Ignore conversation lines without parsing or retaining their contents.
-  if (!/"type"\s*:\s*"(?:session_meta|token_count)"/.test(line)) return;
+  if (!/"type"\s*:\s*"(?:session_meta|turn_context|token_count|token_usage_record|task_started|task_complete|turn_aborted)"/.test(line)) return;
   let event; try { event = JSON.parse(line); } catch { return; }
   if (event.type === 'session_meta') {
     const id = event.payload?.id;
@@ -18,7 +19,29 @@ function record(index, line, now) {
     if (Number.isFinite(started)) index.started = started;
     return;
   }
-  if (event.type !== 'event_msg' || event.payload?.type !== 'token_count') return;
+  const payload = event.payload;
+  const turnId = typeof payload?.turn_id === 'string' && THREAD_ID.test(payload.turn_id) ? payload.turn_id.toLowerCase() : null;
+  if (event.type === 'turn_context') {
+    const id = turnId || (payload?.turn_id == null ? index.turn?.id : null);
+    const effort = normalizeEffort(payload?.effort);
+    if (id && effort) index.turns.set(id, { ...index.turns.get(id), effort });
+    return;
+  }
+  if (event.type === 'token_usage_record') {
+    const total = payload?.turn_token_usage?.total_tokens;
+    if (turnId && Number.isSafeInteger(total) && total >= 0) index.turns.set(turnId, { ...index.turns.get(turnId), total, direct: true });
+    return;
+  }
+  if (event.type !== 'event_msg') return;
+  if (payload?.type === 'task_started') {
+    index.turn = turnId ? { id: turnId, baseline: index.last?.total } : null;
+    return;
+  }
+  if (payload?.type === 'task_complete' || payload?.type === 'turn_aborted') {
+    if (turnId === index.turn?.id) index.turn = null;
+    return;
+  }
+  if (payload?.type !== 'token_count') return;
   const raw = event.payload.info?.total_token_usage;
   const at = Date.parse(event.timestamp);
   if (!Number.isSafeInteger(raw?.total_tokens) || raw.total_tokens < 0 || !Number.isFinite(at)) return;
@@ -28,6 +51,10 @@ function record(index, line, now) {
   const delta = value.total - (index.last?.total || 0);
   if (delta < 0 || at < (index.lastAt || 0)) return;
   index.last = value; index.lastAt = at;
+  const turn = index.turn;
+  if (turn?.baseline != null && value.total >= turn.baseline && !index.turns.get(turn.id)?.direct) {
+    index.turns.set(turn.id, { ...index.turns.get(turn.id), total: value.total - turn.baseline, direct: false });
+  }
   if (at < (index.started || 0)) index.baseline = value;
   if (at >= now - 40 * DAY && at <= now + 60000 && at >= (index.started || 0) && delta > 0) {
     const key = hourKey(new Date(at));
@@ -65,7 +92,7 @@ class UsageIndex {
         const stat = await fs.promises.stat(file);
         let row = this.files.get(file);
         if (!row || row.offset > stat.size || row.birth !== stat.birthtimeMs || (row.offset === stat.size && row.mtime !== stat.mtimeMs)) {
-          row = { birth: stat.birthtimeMs, offset: 0, partial: '', skip: false, hours: new Map() }; this.files.set(file, row);
+          row = { birth: stat.birthtimeMs, offset: 0, partial: '', skip: false, hours: new Map(), turns: new Map() }; this.files.set(file, row);
         }
         for (const [key, value] of row.hours) if (value.at < now - 40 * DAY) row.hours.delete(key);
         if (stat.size === row.offset) { row.mtime = stat.mtimeMs; continue; }
@@ -96,6 +123,21 @@ class UsageIndex {
     if (!row) return null;
     return Object.fromEntries(Object.keys(counts).map(key => [key, Math.max(0, row.last[key] - (row.baseline?.[key] || 0))]));
   }
+  getTurns(ids) {
+    const requested = new Set(ids);
+    const matches = new Map();
+    for (const row of this.files.values()) {
+      for (const id of requested) {
+        const value = row.turns.get(id);
+        if (!value) continue;
+        const match = matches.get(id) || {};
+        if (value.total != null && (match.total == null || value.direct)) match.total = value.total;
+        if (value.effort) match.effort = value.effort;
+        matches.set(id, match);
+      }
+    }
+    return Object.fromEntries([...matches].map(([id, { total = null, effort = null }]) => [id, { total, effort }]));
+  }
   chart(now = new Date()) {
     const hours = new Map();
     const threads = this.threads();
@@ -111,4 +153,4 @@ class UsageIndex {
     };
   }
 }
-module.exports = { UsageIndex, THREAD_ID };
+module.exports = { UsageIndex, THREAD_ID, normalizeEffort };

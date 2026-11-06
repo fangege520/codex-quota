@@ -9,7 +9,7 @@
   if (window[key]) return true;
 
   let payload = null, leaseUntil = 0, frame = 0, disposed = false, host = null, reason = 'waiting-data';
-  let shadow, shortText, weeklyText, shortBar, weeklyBar, dot;
+  let shadow, strip;
   const now = () => Date.now();
   function mount() {
     if (host?.isConnected || !document.body) return;
@@ -19,15 +19,59 @@
     host.style.cssText = 'position:fixed;display:none;z-index:2147483000;pointer-events:auto;box-sizing:border-box;';
     shadow = host.attachShadow({ mode: 'open' });
     shadow.innerHTML = `<style>
-      :host{color-scheme:light dark;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;user-select:none}
-      .strip{height:28px;display:flex;align-items:center;gap:9px;padding:3px 9px;border:1px solid light-dark(#dfe5e0,#ffffff20);border-radius:8px;background:light-dark(#f4f7f4,#252c27);color:light-dark(#35413a,#e0eae2);font-size:11px;white-space:nowrap;box-sizing:border-box;line-height:1.1}
-      .window{display:grid;grid-template-columns:17px 32px;gap:2px 4px;align-items:baseline;min-width:53px}
-      .name{opacity:.62;font-size:10px}.value{text-align:right;font-weight:600;font-variant-numeric:tabular-nums}.track{height:2px;border-radius:2px;background:light-dark(#dce3dd,#ffffff15);grid-column:1/-1;overflow:hidden}.fill{height:100%;width:0;background:#56a66e;border-radius:2px}
-      .dot{height:4px;width:4px;border-radius:50%;background:#62ab78;flex-shrink:0}.divider{height:12px;width:1px;background:light-dark(#dbe2dc,#ffffff20)}
-      .stale .dot{background:#d5a464}.stale{opacity:.68}.mini .track{display:none}.mini{gap:5px;padding-inline:5px}.mini .window{grid-template-columns:auto auto;min-width:0;gap:3px}.mini .dot{display:none}
-    </style><div class="strip" role="group"><span class="dot"></span><div class="window"><span class="name">5h</span><span class="value short">—</span><div class="track"><div class="fill short-fill"></div></div></div><span class="divider"></span><div class="window"><span class="name">7d</span><span class="value weekly">—</span><div class="track"><div class="fill weekly-fill"></div></div></div></div>`;
-    shortText = shadow.querySelector('.short'); weeklyText = shadow.querySelector('.weekly');
-    shortBar = shadow.querySelector('.short-fill'); weeklyBar = shadow.querySelector('.weekly-fill'); dot = shadow.querySelector('.dot');
+      :host { color-scheme: light dark; font-family: system-ui, "Segoe UI", sans-serif; user-select: none; }
+      [hidden] { display: none !important; }
+      .strip {
+        --surface: var(--display-card, light-dark(#f8faf9, #26282a));
+        --line: light-dark(#d5ded8, #ffffff24);
+        --muted: light-dark(#566763, #afb8b6);
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        width: max-content;
+        height: 100%;
+        padding: 3px 11px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--surface);
+        color: var(--display-ink, light-dark(#202a26, #f2f5f3));
+        box-shadow: 0 1px 2px #0001;
+        font-size: calc(12px * var(--font-scale));
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        box-sizing: border-box;
+        line-height: 1;
+      }
+      .window { display: flex; align-items: center; gap: 6px; }
+      .name { color: var(--display-ink, var(--muted)); }
+      .value { color: var(--display-ink, var(--display-accent)); font-weight: 750; }
+      .ring {
+        width: calc(17px * var(--ring-scale));
+        aspect-ratio: 1;
+        flex: none;
+        box-sizing: border-box;
+        border-radius: 50%;
+        background: radial-gradient(closest-side, var(--surface) calc(100% - 2px), transparent calc(100% - 1.75px)),
+          conic-gradient(var(--tone), var(--tone-end) var(--remaining), var(--track, var(--line)) 0);
+      }
+      .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--display-accent); flex: none; }
+      .divider { height: 13px; border-left: 1px solid var(--line); }
+      .metric { color: var(--display-ink, var(--muted)); font-size: .88em; }
+      .metric b { color: var(--display-ink, light-dark(#202a26, #f2f5f3)); }
+      .stale .dot { background: light-dark(#946400, #f1c75b); }
+      .mini { gap: 5px; padding-inline: 6px; }
+      .mini .window { gap: 3px; }
+      .mini .ring { width: calc(13px * var(--ring-scale)); }
+      .mini .dot { width: 4px; height: 4px; }
+    </style><div class="strip" role="group">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="window"><span class="ring short-ring" aria-hidden="true"></span><span class="name">5h</span><b class="value short">—</b></span>
+      <span class="divider quota-divider" aria-hidden="true"></span>
+      <span class="window"><span class="ring weekly-ring" aria-hidden="true"></span><span class="name">7d</span><b class="value weekly">—</b></span>
+      <span class="divider credits-divider" aria-hidden="true"></span><span class="metric credits"><span class="credits-label"></span> <b>—</b></span>
+      <span class="divider reset-divider" aria-hidden="true"></span><span class="metric resets"><span class="reset-label"></span> <b>—</b></span>
+    </div>`;
+    strip = shadow.querySelector('.strip');
     // Add a separate owned node; never move React nodes or write into the editor.
     document.body.append(host);
   }
@@ -58,31 +102,62 @@
       if (r.right <= rect.left + 1 && r.bottom > rect.top && r.top < rect.bottom) leftEdge = Math.max(leftEdge, r.right + 8);
     }
     const available = rect.left - leftEdge - 8;
-    if (available < 104) { host.style.display = 'none'; reason = 'insufficient-space'; return; }
-    const mini = available < 156;
-    const width = mini ? 104 : 156;
-    const strip = shadow.querySelector('.strip');
-    strip.classList.toggle('mini', mini);
+    if (['short', 'weekly', 'credits', 'resets'].every(key => payload.display?.[key] === false)) {
+      host.style.display = 'none'; reason = 'content-hidden'; return;
+    }
+    host.style.colorScheme = quotaDisplay.colorScheme(anchor, payload.theme);
+    host.style.height = '28px';
+    host.style.display = 'block';
+    strip.classList.remove('mini');
+    let width = Math.ceil(strip.getBoundingClientRect().width);
+    if (width > available) {
+      strip.classList.add('mini');
+      width = Math.ceil(strip.getBoundingClientRect().width);
+    }
+    if (width > available) { host.style.display = 'none'; reason = 'insufficient-space'; return; }
+    const left = Math.floor(rect.left - width - 8);
+    const top = Math.max(2, Math.round(rect.top + rect.height / 2 - 14));
+    host.style.left = left + 'px'; host.style.top = top + 'px'; host.style.width = width + 'px';
+    reason = 'visible';
+  }
+  function paint() {
+    if (!strip) return;
+    quotaDisplay.apply(host, payload.display, 'composer');
     const stale = !!payload.error || !Number.isFinite(payload.fetchedAt) || now() - payload.fetchedAt > 150000;
     strip.classList.toggle('stale', stale);
     const zh = payload.language !== 'en';
     const details = [zh ? 'Codex 剩余额度' : 'Codex remaining quota'];
-    for (const [data, text, bar, name] of [[payload.short, shortText, shortBar, '5h'], [payload.weekly, weeklyText, weeklyBar, '7d']]) {
-      const percent = data && Number.isFinite(data.remaining) ? Math.max(0, Math.min(100, data.remaining)) : null;
+    const showShort = payload.display?.short !== false, showWeekly = payload.display?.weekly !== false;
+    const showQuota = showShort || showWeekly, showCredits = payload.display?.credits !== false, showResets = payload.display?.resets !== false;
+    for (const [key, name] of [['short', '5h'], ['weekly', '7d']]) {
+      const data = payload[key], text = shadow.querySelector('.' + key), ring = shadow.querySelector('.' + key + '-ring');
+      const percent = quotaDisplay.percent(data?.remaining);
+      const visible = payload.display?.[key] !== false;
+      text.closest('.window').hidden = !visible;
       text.textContent = percent == null ? '—' : Math.round(percent) + '%';
-      bar.style.width = (percent ?? 0) + '%';
-      bar.style.background = percent == null ? '#8b968e' : percent <= 10 ? '#d87777' : percent <= 30 ? '#c39452' : '#56a66e';
+      ring.style.setProperty('--remaining', (percent ?? 0) + '%');
+      quotaDisplay.progressColors(ring, percent);
+      ring.style.setProperty('--track', percent === 0 ? 'color-mix(in srgb, var(--tone) 45%, var(--line))' : 'var(--line)');
       const reset = Number.isFinite(data?.resetsAt) ? new Date(data.resetsAt).toLocaleString(zh ? 'zh-CN' : 'en-US') : '—';
-      details.push(`${name}: ${text.textContent} · ${zh ? '重置' : 'resets'} ${reset}`);
+      if (visible) details.push(`${name}: ${text.textContent} · ${zh ? '重置' : 'resets'} ${reset}`);
     }
+    shadow.querySelector('.quota-divider').hidden = !showShort || !showWeekly;
+    shadow.querySelector('.credits-divider').hidden = !showQuota || !showCredits;
+    shadow.querySelector('.reset-divider').hidden = !(showQuota || showCredits) || !showResets;
+    const credit = quotaDisplay.creditValue(payload.credits);
+    const exactCredit = payload.credits?.unlimited ? '∞' : quotaDisplay.full(credit, payload.language);
+    shadow.querySelector('.credits').hidden = !showCredits;
+    shadow.querySelector('.credits-label').textContent = zh ? '点数' : 'Credits';
+    shadow.querySelector('.credits b').textContent = payload.credits?.unlimited ? '∞' : quotaDisplay.compact(credit, payload.language, 0);
+    if (showCredits) details.push((zh ? '点数 ' : 'Credits ') + exactCredit);
+    shadow.querySelector('.resets').hidden = !showResets;
+    shadow.querySelector('.reset-label').textContent = zh ? '重置卡' : 'Resets';
+    shadow.querySelector('.resets b').textContent = quotaDisplay.compact(payload.resetCount, payload.language);
+    if (showResets) details.push((zh ? '重置卡 ' : 'Saved resets ') + quotaDisplay.full(payload.resetCount, payload.language));
     if (stale) details.push(zh ? '刷新失败或数据已过期，显示上次数据' : 'Refresh failed or stale; showing cached data');
     if (payload.demo) details.push(zh ? '演示数据' : 'Demo data');
     const title = details.join('\n');
     host.title = title; strip.setAttribute('aria-label', title);
-    const left = Math.round(rect.left - width - 8);
-    const top = Math.max(2, Math.round(rect.top + rect.height / 2 - 14));
-    host.style.left = left + 'px'; host.style.top = top + 'px'; host.style.width = width + 'px'; host.style.height = '28px';
-    host.style.display = 'block'; reason = 'visible';
   }
   function schedule() { if (!frame && !disposed) frame = requestAnimationFrame(layout); }
   const observer = new MutationObserver(records => {
@@ -92,7 +167,7 @@
   addEventListener('resize', schedule); addEventListener('scroll', schedule, true);
   const interval = setInterval(layout, 1000);
   window[key] = {
-    update(data, enabled = true) { payload = data; leaseUntil = enabled ? now() + 12000 : 0; layout(); },
+    update(data, enabled = true) { payload = data; leaseUntil = enabled ? now() + 12000 : 0; mount(); paint(); layout(); },
     status() {
       const bounds = host?.getBoundingClientRect();
       return { mounted: !!host?.isConnected, visible: reason === 'visible', reason,

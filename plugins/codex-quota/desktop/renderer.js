@@ -7,6 +7,17 @@ function paint(state) {
   const zh = state.settings.language === 'zh';
   const t = (cn, en) => zh ? cn : en;
   const now = Date.now();
+  quotaDisplay.apply(document.body, state.settings.display, 'floating');
+  const showShort = state.settings.display?.short !== false, showWeekly = state.settings.display?.weekly !== false;
+  const showResets = state.settings.display?.resets !== false;
+  $('window-hint').hidden = !showShort && !showWeekly;
+  $('compact-divider').hidden = !showShort || !showWeekly;
+  const resetCount = state.quota?.resets?.count;
+  for (const id of ['saved-resets', 'compact-resets']) {
+    $(id).hidden = !showResets;
+    text(id, t('重置卡 ', 'Resets ') + quotaDisplay.compact(resetCount, state.settings.language));
+    $(id).title = t('重置卡 ', 'Saved resets ') + quotaDisplay.full(resetCount, state.settings.language);
+  }
   const stale = !!state.error || !!state.quota && now - state.quota.fetchedAt > Math.max(120000, state.settings.interval * 2500);
   document.documentElement.lang = zh ? 'zh-CN' : 'en';
   document.body.classList.toggle('collapsed', state.settings.collapsed);
@@ -18,14 +29,17 @@ function paint(state) {
   text('weekly-title', t('7 天', '7 days'));
   text('plan', state.demo ? t('演示', 'DEMO') : (state.quota?.plan || 'CODEX').toUpperCase());
   for (const [id, value] of [['short', state.quota?.short], ['weekly', state.quota?.weekly]]) {
-    const percent = value ? `${Math.round(value.remaining)}%` : '—';
+    const visible = state.settings.display?.[id] !== false;
+    $(`${id}-ring`).closest('.quota-row').hidden = !visible;
+    $(`compact-${id}`).closest('.compact-quota').hidden = !visible;
+    const remaining = quotaDisplay.percent(value?.remaining);
+    const percent = remaining == null ? '—' : `${remaining}%`;
     text(`${id}-percent`, percent); text(`compact-${id}`, percent);
-    $(`${id}-ring`).style.setProperty('--remaining', value?.remaining || 0);
-    const tone = value && value.remaining <= 10 ? '#d87976' : value && value.remaining <= 30 ? '#d7a043' : id === 'short' ? 'var(--accent)' : 'var(--weekly)';
-    $(`${id}-ring`).closest('.quota-row').style.setProperty('--tone', tone);
+    $(`${id}-ring`).style.setProperty('--remaining', remaining ?? 0);
+    $(`${id}-ring`).classList.toggle('depleted', remaining === 0);
+    quotaDisplay.progressColors($(`${id}-ring`).closest('.quota-row'), remaining);
     const bar = $(`${id}-bar`);
     bar.value = value?.remaining || 0;
-    bar.style.setProperty('--bar', !value ? '#555d50' : value.remaining <= 10 ? '#ec9292' : value.remaining <= 30 ? '#e9bc80' : '#a9e9ad');
     let reset = t('暂无数据', 'Unavailable');
     if (value?.resetsAt) {
       const diff = value.resetsAt - now;

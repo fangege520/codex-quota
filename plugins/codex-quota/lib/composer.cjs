@@ -3,7 +3,8 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
-const { THREAD_ID } = require('./usage.cjs');
+const { THREAD_ID, normalizeEffort } = require('./usage.cjs');
+const quotaDisplay = require('../desktop/display.js');
 
 const DEFAULT_PORT = 9339;
 const ACTION_BINDING = '__codexQuotaActionV2';
@@ -77,27 +78,32 @@ function displayPayload(state) {
     remaining: Math.max(0, Math.min(100, value.remaining)),
     resetsAt: Number.isFinite(value.resetsAt) ? value.resetsAt : null
   } : null;
+  const credits = state.quota?.credits;
   return { short: pick(state.quota?.short), weekly: pick(state.quota?.weekly),
     fetchedAt: Number.isFinite(state.quota?.fetchedAt) ? state.quota.fetchedAt : null,
-    error: !!state.error, language: state.settings?.language === 'en' ? 'en' : 'zh', demo: !!state.demo };
+    error: !!state.error, language: state.settings?.language === 'en' ? 'en' : 'zh', demo: !!state.demo,
+    theme: state.settings?.theme === 'light' || state.settings?.theme === 'dark' ? state.settings.theme : 'system',
+    display: quotaDisplay.normalize(state.settings?.display),
+    resetCount: Number.isSafeInteger(state.quota?.resets?.count) && state.quota.resets.count >= 0 ? state.quota.resets.count : null,
+    credits: credits ? { balance: typeof credits.balance === 'string' && /^-?\d+(?:\.\d+)?$/.test(credits.balance) ? credits.balance.slice(0,32) : null, unlimited: credits.unlimited === true } : null };
 }
 
 function displayRailPayload(state) {
   const q = state.quota, raw = q?.resets;
   return {
     ...displayPayload(state),
-    credits: q?.credits ? { balance: typeof q.credits.balance === 'string' && /^-?\d+(?:\.\d+)?$/.test(q.credits.balance) ? q.credits.balance.slice(0,32) : null, unlimited: q.credits.unlimited === true } : null,
     resets: Number.isSafeInteger(raw?.count) && raw.count >= 0 ? { count: raw.count, cards: (Array.isArray(raw.cards) ? raw.cards : []).slice(0,100).map(card => ({ expiresAt: Number.isFinite(card?.expiresAt) ? card.expiresAt : null })) } : null,
     plan: typeof q?.plan === 'string' ? q.plan.slice(0,32) : null
   };
 }
 
 class ComposerBridge extends EventEmitter {
-  constructor({ port = DEFAULT_PORT, targetFilter = isWorkspaceTarget, source, threadUsage } = {}) {
+  constructor({ port = DEFAULT_PORT, targetFilter = isWorkspaceTarget, source, threadUsage, turnUsage } = {}) {
     super(); if (!validPort(port)) throw new Error('INVALID_CDP_PORT');
     this.port = port; this.filter = targetFilter;
-    this.source = source || ['rail-widget.js', 'composer-widget.js'].map(file => fs.readFileSync(path.join(__dirname, '..', 'desktop', file), 'utf8')).join('\n');
+    this.source = source || '(() => {\n' + ['display.js', 'rail-widget.js', 'composer-widget.js'].map(file => fs.readFileSync(path.join(__dirname, '..', 'desktop', file), 'utf8')).join('\n') + '\n})();';
     this.threadUsage = threadUsage;
+    this.turnUsage = turnUsage;
     this.sessions = new Map(); this.enabled = false; this.busy = false; this.timer = null; this.payload = displayPayload({});
     this.status = { phase: 'disabled', targets: 0, visible: 0, reasons: [] };
   }
@@ -106,8 +112,30 @@ class ComposerBridge extends EventEmitter {
     this.railPayload = displayRailPayload(state);
     this.showComposer = state.settings?.composerEnabled !== false;
   }
+  preview(state) {
+    this.update(state);
+    const expression = `window.__codexQuotaComposerV1?.update(${JSON.stringify(this.payload)},${this.showComposer});window.__codexQuotaRailV1?.update(${JSON.stringify(this.railPayload)});`;
+    for (const { connection } of this.sessions.values()) {
+      connection.call('Runtime.evaluate', { expression, returnByValue: true }).catch(() => {});
+    }
+  }
   report(status) { this.status = status; this.emit('status', status); }
   start() { if (this.enabled) return; this.enabled = true; this.tick(); }
+  waitForConnection(timeout = 20000) {
+    // Wait for a fresh probe. The last status may belong to a client that just exited.
+    return new Promise(resolve => {
+      const finish = connected => {
+        clearTimeout(timer);
+        this.off('status', onStatus);
+        resolve(connected);
+      };
+      const onStatus = ({ phase }) => {
+        if (phase === 'connected' || phase === 'disabled') finish(phase === 'connected');
+      };
+      const timer = setTimeout(finish, timeout, false);
+      this.on('status', onStatus);
+    });
+  }
   async focus() {
     let connection;
     try {
@@ -151,6 +179,22 @@ class ComposerBridge extends EventEmitter {
                 if (Date.now() - (this.lastActionAt || 0) < 500) return;
                 this.lastActionAt = Date.now(); this.emit(event.payload); return;
               }
+              if (event.payload.startsWith('turns:') && this.turnUsage && event.payload.length <= 1500) {
+                const ids = [...new Set(event.payload.slice(6).split(','))];
+                if (!ids.every(id => THREAD_ID.test(id)) || Date.now() - (session.lastTurnsAt || 0) < 500) return;
+                session.lastTurnsAt = Date.now();
+                try {
+                  const result = await this.turnUsage(ids);
+                  if (!this.enabled || this.sessions.get(target.id) !== session) return;
+                  const values = Object.fromEntries(ids.map(id => {
+                    const turn = result?.[id];
+                    const total = turn?.total;
+                    return [id, { total: Number.isSafeInteger(total) && total >= 0 ? total : null, effort: normalizeEffort(turn?.effort) }];
+                  }));
+                  await connection.call('Runtime.evaluate', { expression: 'window.__codexQuotaRailV1?.setTurnUsage(' + JSON.stringify(values) + ')', returnByValue: true });
+                } catch {}
+                return;
+              }
               const id = event.payload.startsWith('thread:') ? event.payload.slice(7) : '';
               if (!THREAD_ID.test(id) || !this.threadUsage || Date.now() - (session.lastThreadAt || 0) < 150) return;
               session.lastThreadAt = Date.now();
@@ -177,7 +221,8 @@ class ComposerBridge extends EventEmitter {
           if (typeof value?.composer?.reason === 'string') reasons.push(value.composer.reason);
         } catch { await this.detach(target.id); reasons.push('connection-failed'); }
       }
-      if (this.enabled) this.report({ phase: targets.length ? 'connected' : 'no-workspace', targets: targets.length, visible, sidebarVisible, reasons });
+      const phase = this.sessions.size ? 'connected' : targets.length ? 'attach-failed' : 'no-workspace';
+      if (this.enabled) this.report({ phase, targets: targets.length, visible, sidebarVisible, reasons });
     } catch {
       for (const id of [...this.sessions.keys()]) await this.detach(id);
       if (this.enabled) this.report({ phase: 'waiting', targets: 0, visible: 0, reasons: ['debug-port-unavailable'] });

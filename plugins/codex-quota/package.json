@@ -53,7 +53,8 @@
     },
     "asar": true,
     "asarUnpack": [
-      "lib/*.ps1"
+      "lib/*.ps1",
+      "lib/stop-mac-app.js"
     ]
   }
 }

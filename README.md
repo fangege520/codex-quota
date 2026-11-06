@@ -21,17 +21,19 @@ Windows 使用独立窗口覆盖任务栏空位，不注入或修改 Explorer。
 
 ## 0.4 左栏用量、设置与启动
 
-**Windows 首次使用**：等当前任务完成并完全退出普通 Codex，从桌面或开始菜单打开 **Codex（用量助手）**。这个入口同时启动助手并连接 Codex 左栏。macOS 可用托盘里的 **启动 Codex（用量助手）**。
+安装后，用 Windows 桌面或开始菜单的 **Codex（用量助手）**，或 Finder 用户应用程序目录 `~/Applications` 里的 **Codex Quota.app**，可以同时打开助手和 Codex，并连接客户端左栏和编辑框。使用原来的 ChatGPT 图标也会随客户端拉起助手。
 
-- 左下导航栏显示 5 小时/7 天额度、进度和重置时间，另有 Codex 点数余额、重置卡张数、会员套餐和齿轮。悬停查看额度详情或可用重置卡的到期时间。空位不足时保留齿轮；没有安全空位时可从托盘打开设置。
+- 左下导航栏用圆环显示 5 小时和 7 天的剩余额度，环下显示重置时间。剩余 51%–100% 为绿色、21%–50% 为黄色、0%–20% 为红色，暂无数据时显示灰色空环。左栏支持浅色、深色和自动外观。
+- 圆环下方显示 Codex 点数余额、重置卡张数、会员套餐和设置齿轮。悬停可查看额度详情或重置卡的到期时间。空位较小时使用紧凑布局，再缩小则只保留齿轮；没有安全空位时可从托盘打开设置。
 - 点击点数/重置卡跳到 Codex 用量设置。详情里的使用按钮打开 [官方用量页面](https://chatgpt.com/settings/usage)，购买和兑换由用户自行完成。
 - 悬停会话行查看 Token。优先使用本机记录；可用时回退到明确标注的服务端估算。
+- 每轮用时旁显示本轮 Token 和日志里记录的推理强度。窄窗口可悬停 Token 标签查看强度。
 - 齿轮打开居中设置，包含今日逐小时、本周逐日、本月逐日柱状图，及编辑框、任务栏/菜单栏、浮窗三个开关。编辑框额度条没有设置按钮。
 
 ![左栏和编辑框（独立测试窗口）](docs/composer-preview.png)
 ![居中设置（演示数据）](docs/settings-preview.png)
 
-原厂图标不会启动页面连接。新版启动入口通过 Windows 系统应用激活接口传入本地连接参数，每次重新查找当前安装版本，不会强制结束现有 Codex，也不会替换原厂图标。
+如果客户端已运行但尚未连接，快捷方式和助手设置里的 **启动 Codex（用量助手）** 都会询问是否重启。点 **重启** 会强制结束客户端并重新连接，可能中断当前任务。Windows 遇到权限不足时会弹出系统授权。
 
 首次启动会把程序和 Electron 复制到本机 `codex-quota/runtime/<版本>` 持久目录，避免 Codex 启动时重建插件缓存而丢失运行依赖。该目录与设置一样位于 Windows `%APPDATA%` 或 macOS `~/Library/Application Support`。
 
@@ -39,7 +41,7 @@ Windows 使用独立窗口覆盖任务栏空位，不注入或修改 Explorer。
 
 ```sh
 node scripts/manage.cjs settings
-node scripts/manage.cjs create-launcher  # Windows：创建或刷新快捷方式
+node scripts/manage.cjs create-launcher  # 创建或更新助手入口和启动联动
 node scripts/manage.cjs composer-status
 # 完全退出 Codex 后，在外部终端执行：
 node scripts/manage.cjs launch-codex
@@ -54,25 +56,23 @@ node scripts/manage.cjs launch-codex
 
 ## 直接发给 Codex
 
-复制下面这段到 Codex：
+在 Windows 或 macOS 的 Codex 桌面端发送这一句：
 
 ```text
-请帮我安装并启动这个 Codex 额度悬浮窗：
-https://github.com/fangege520/codex-quota
-请先读取仓库的 INSTALL.md，按我当前的 Windows 或 macOS 环境完成安装、额度读取验证和启动。
+请下载 https://github.com/fangege520/codex-quota，读取 INSTALL.md，按当前系统安装并启动 Codex 用量助手，创建启动入口并验证额度显示。
 ```
 
-当前仓库保持私有：朋友需要被授予仓库读取权限并完成 GitHub 登录，才能通过链接下载。之后仓库公开时，上面同一段提示词可以继续用。安装依赖与首次下载 Electron 需要网络；首次账户登录和系统授权仍需本人完成。
+安装依赖与首次下载 Electron 需要网络。需要登录 ChatGPT 或授予系统权限时，由本人操作。仓库为私有时，下载前需要 GitHub 读取权限。
 
 ## 功能
 
-- 屏幕右上角首次显示，可拖动到任意显示器，自动记住位置。
+- 桌面悬浮框可在设置中开启，拖动到任意显示器后会记住位置。重启助手时按已保存的开关决定是否显示。
 - 同时显示 5 小时与每周的**剩余**百分比、进度条和重置时间。
 - 保持置顶、折叠成小条、隐藏到 Windows 托盘 / macOS 菜单栏。
 - Ctrl/⌘+Shift+Q 切换显示；快捷键被其他软件占用时可使用托盘菜单。
 - 默认每 60 秒刷新，可选 30/120 秒；失败自动重试并标记上次数据。
 - 中文 / English、透明度、恢复位置、手动选择 Codex 可执行文件。
-- 打包版支持登录时启动；源码版不会写入开机启动配置。
+- Git 安装支持随 ChatGPT 启动，独立打包版支持随系统登录启动。
 
 ## 安装原理
 
@@ -122,7 +122,7 @@ node scripts/manage.cjs stop
 
 桌面端和独立 CLI 的登录账户、`CODEX_HOME` 可能不同；如果额度不一致，请检查本机所选 CLI 的登录账户。需要时可通过菜单选择 CLI，或设置 `CODEX_QUOTA_CODEX_BIN` 为原生可执行文件路径。
 
-窗口位置、透明度等设置仅保存在本机的 `codex-quota/settings.json` 中。Windows 位于 `%APPDATA%`，macOS 位于 `~/Library/Application Support`。关闭窗口默认隐藏到托盘，彻底退出请使用菜单。卸载插件前先退出悬浮窗；已安装的独立打包应用需另外卸载。
+窗口位置、透明度等设置仅保存在本机的 `codex-quota/settings.json` 中。Windows 位于 `%APPDATA%`，macOS 位于 `~/Library/Application Support`。关闭窗口默认隐藏到托盘，彻底退出请使用菜单。卸载插件前先退出助手，再从插件目录执行 `node scripts/manage.cjs remove-launcher` 清理入口和联动。已安装的独立打包应用需另外卸载。
 
 ## 测试与发布
 

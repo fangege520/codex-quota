@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { findFreeBounds, popoverBounds } = require('../lib/system-bar.cjs');
+const { findFreeBounds, findTaskbarCardBounds, popoverBounds } = require('../lib/system-bar.cjs');
 test('taskbar strip avoids icons and notification area when icon positions change', () => {
   const bar = { x: 0, y: 760, width: 1280, height: 40 };
   const icons = [{ x: 0, y: 760, width: 336, height: 40 }, { x: 933, y: 760, width: 347, height: 40 }];
@@ -27,6 +27,12 @@ test('battery, weather and legacy task buttons leave only a narrow safe slot', (
   assert.equal(findFreeBounds(bar, moreTrayIcons, 80, 36), null);
   const tiny = findFreeBounds(bar, moreTrayIcons, 48, 36);
   assert.ok(tiny); assert.ok(tiny.x + tiny.width <= 759);
+  const highDpi = [{ ...bar, width: 721 }, { ...bar, x: 769.5, width: 510.5 }];
+  assert.equal(findFreeBounds(bar, highDpi, 48, 36), null);
+  assert.deepEqual(findFreeBounds(bar, highDpi, 42, 36, undefined, 2), { x: 723, y: 762, width: 42, height: 36 });
+  assert.equal(findTaskbarCardBounds(bar, highDpi).width, 42);
+  const tight = [highDpi[0], { ...highDpi[1], x: 761 }];
+  assert.equal(findTaskbarCardBounds(bar, tight).width, 36);
 });
 test('unsupported, hidden or cramped taskbars hide instead of covering controls', () => {
   for (const bar of [{ x: 0, y: 0, width: 40, height: 800 }, { x: 0, y: 799, width: 1280, height: 1 }, { x: 0, y: 0, width: 170, height: 40 }]) assert.equal(findFreeBounds(bar, []), null);

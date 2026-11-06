@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Codex Quota</title>
   <link rel="stylesheet" href="style.css">
+  <script defer src="display.js"></script>
   <script defer src="renderer.js"></script>
 </head>
 <body>
@@ -19,7 +20,7 @@
       </div>
     </header>
     <div id="expanded">
-      <div class="intro"><span class="plan" id="plan">CODEX</span><span class="intro-hint" id="window-hint">额度窗口</span></div>
+      <div class="intro"><span class="plan" id="plan">CODEX</span><span class="intro-hint" id="window-hint">额度窗口</span><span class="saved-resets" id="saved-resets"></span></div>
       <section class="quota-row">
         <div class="ring" id="short-ring"><span>5h</span></div>
         <div class="quota-detail"><div class="row"><span id="short-title">5 小时</span><span class="percent" id="short-percent">—</span></div><div class="reset" id="short-reset">读取中…</div><progress id="short-bar" max="100" value="0" aria-label="5 hour remaining quota"></progress></div>
@@ -32,8 +33,8 @@
     </div>
     <div id="compact" class="drag">
       <span class="mini-mark">↗</span>
-      <span>5h <strong id="compact-short">—</strong></span><span class="divider"></span>
-      <span>7d <strong id="compact-weekly">—</strong></span>
+      <span class="compact-quota">5h <strong id="compact-short">—</strong></span><span class="divider" id="compact-divider"></span>
+      <span class="compact-quota">7d <strong id="compact-weekly">—</strong></span><span class="saved-resets" id="compact-resets"></span>
       <span id="compact-status">●</span>
       <button id="compact-expand" class="no-drag" aria-label="Expand" title="展开 / Expand">⌄</button>
       <button id="compact-hide" class="no-drag" aria-label="Hide" title="隐藏 / Hide">−</button>
