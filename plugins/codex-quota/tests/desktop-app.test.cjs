@@ -2,6 +2,7 @@ const { test, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const childProcess = require('node:child_process');
 const fs = require('node:fs');
+const path = require('node:path');
 
 test('Windows Store launcher uses package activation and reports activation failure', async () => {
   const platform = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -29,6 +30,63 @@ test('Windows Store launcher uses package activation and reports activation fail
     fail = true;
     await assert.rejects(launchDesktop({ executable }), /DESKTOP_ACTIVATION_FAILED: Activation denied/);
     await assert.rejects(launchDesktop({ executable, port: 80 }), /INVALID_CDP_PORT/);
+  } finally {
+    mock.restoreAll();
+    Object.defineProperty(process, 'platform', platform);
+    delete require.cache[modulePath];
+  }
+});
+
+test('macOS AppKit can report desktop bundle status', { skip: process.platform !== 'darwin' }, () => {
+  const script = path.join(__dirname, '..', 'lib', 'stop-mac-app.js');
+  const result = childProcess.execFileSync('/usr/bin/osascript', ['-l', 'JavaScript', script, '/Applications/Codex Quota Test.app', 'status'], { encoding: 'utf8', timeout: 5000 });
+  assert.match(result.trim(), /^(?:stopped|other)$/);
+});
+
+test('macOS uses the selected ChatGPT bundle for both quota and desktop launch', async () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+  const app = path.resolve('Apps With Spaces', 'ChatGPT.app');
+  const classic = path.resolve('Apps With Spaces', 'ChatGPT Classic.app');
+  const guiExecutable = path.join(app, 'Contents', 'MacOS', 'ChatGPT');
+  const resources = path.join(app, 'Contents', 'Resources');
+  const codex = path.join(resources, 'codex');
+  const archive = path.join(resources, 'app.asar');
+  const exists = fs.existsSync;
+  const access = fs.accessSync;
+  const stat = fs.statSync;
+  const calls = [];
+  let status = 'stopped', openFails = false;
+  mock.method(fs, 'existsSync', file => [app, classic, guiExecutable, archive].includes(file) || exists(file));
+  mock.method(fs, 'accessSync', (file, mode) => { if (file !== codex) access(file, mode); });
+  mock.method(fs, 'statSync', file => file === codex ? { isFile: () => true } : stat(file));
+  mock.method(childProcess, 'spawnSync', (file, args) => {
+    calls.push({ file, args });
+    return { status: 0, stdout: status + '\n' };
+  });
+  mock.method(childProcess, 'execFile', (file, args, _options, callback) => {
+    calls.push({ file, args });
+    callback(openFails ? new Error('Launch Services error') : null, '', '');
+  });
+  const modulePath = require.resolve('../lib/desktop-app.cjs');
+  delete require.cache[modulePath];
+  try {
+    const { discoverDesktopApp, launchDesktop } = require(modulePath);
+    const { discoverCodex } = require('../lib/codex.cjs');
+    assert.equal(discoverCodex(app), codex);
+    assert.equal(discoverCodex(guiExecutable), codex);
+    assert.equal(discoverDesktopApp(guiExecutable), app);
+    assert.throws(() => discoverCodex(classic), /CODEX_MAC_APP_UNSUPPORTED/);
+    assert.throws(() => discoverDesktopApp(classic), /DESKTOP_APP_UNSUPPORTED/);
+    assert.deepEqual(await launchDesktop({ executable: app }), { executable: app, port: 9339 });
+    assert.deepEqual(calls.find(call => call.file === '/usr/bin/open')?.args,
+      ['-a', app, '--args', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=9339']);
+    openFails = true;
+    await assert.rejects(launchDesktop({ executable: app }), /DESKTOP_LAUNCH_FAILED/);
+    status = 'running';
+    await assert.rejects(launchDesktop({ executable: app }), /CODEX_RESTART_REQUIRED/);
+    status = 'other';
+    await assert.rejects(launchDesktop({ executable: app }), /DESKTOP_OTHER_APP_RUNNING/);
   } finally {
     mock.restoreAll();
     Object.defineProperty(process, 'platform', platform);

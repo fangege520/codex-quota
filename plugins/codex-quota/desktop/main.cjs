@@ -8,6 +8,7 @@ const { CodexClient, discoverCodex } = require('../lib/codex.cjs');
 const { normalizeQuota, clampBounds } = require('../lib/quota.cjs');
 const { ComposerBridge, DEFAULT_PORT, validPort } = require('../lib/composer.cjs');
 const { discoverDesktopApp, launchDesktop, stopDesktop } = require('../lib/desktop-app.cjs');
+const { macAppBundle, isMacCodexApp } = require('../lib/mac-app.cjs');
 const { findTaskbarCardBounds, popoverBounds, TaskbarWatcher } = require('../lib/system-bar.cjs');
 const { UsageIndex } = require('../lib/usage.cjs');
 const quotaDisplay = require('./display.js');
@@ -45,7 +46,7 @@ if (process.argv.includes('--system-bar-on')) settings.systemBarEnabled = true;
 if (process.argv.includes('--system-bar-off')) settings.systemBarEnabled = false;
 if (process.argv.includes('--composer-on')) settings.composerEnabled = true;
 if (process.argv.includes('--composer-off')) settings.composerEnabled = false;
-let win, tray, client, timer, saveTimer, quitting = false, refreshing = false, failures = 0;
+let win, tray, client, timer, saveTimer, quitting = false, refreshing = false, refreshPending = false, failures = 0;
 let bridge, cleanupComplete = false, cleanupInFlight = false;
 let taskbarWatcher, taskbarRecoveryTimer, systemMenuOpen = false, popover = false, hoverOnly = false, popupCloseTimer;
 let settingsWindow, launchingDesktop = false;
@@ -130,7 +131,8 @@ async function launchCodex() {
     // Re-resolve Store installs after every app update. A saved path is only
     // used for a still-existing custom install.
     const custom = settings.desktopAppPath && !/[\\/]WindowsApps[\\/]/i.test(settings.desktopAppPath) && fs.existsSync(settings.desktopAppPath) ? settings.desktopAppPath : undefined;
-    const options = { executable: process.env.CODEX_QUOTA_APP_PATH || custom, port: settings.composerPort };
+    const previousMacBundle = process.platform === 'darwin' ? macAppBundle(settings.codexPath) : null;
+    const options = { executable: process.env.CODEX_QUOTA_APP_PATH || custom || (isMacCodexApp(previousMacBundle) ? previousMacBundle : undefined), port: settings.composerPort };
     try {
       await launchDesktop(options);
     } catch (error) {
@@ -154,11 +156,17 @@ async function launchCodex() {
   } catch (error) {
     if (quitting || error.message === 'CODEX_RESTART_CANCELED') return;
     const retry = choose('请等当前任务完成，再用桌面快捷方式或助手设置重试。', 'Finish active work and try again from the shortcut or the assistant settings.');
+    const selectMacApp = choose('请在用量助手设置里选择支持 Codex 的 ChatGPT.app。旧版 ChatGPT Classic 不包含 Codex。', 'In Quota settings, select the ChatGPT.app that includes Codex. ChatGPT Classic does not include Codex.');
     const messages = {
       CODEX_RESTART_REQUIRED: [choose('Codex 已运行，尚未连接用量助手', 'Codex is running without a quota connection'), retry],
       CODEX_STOP_FAILED: [choose('未能关闭 Codex 客户端', 'Could not close Codex'), retry],
-      CODEX_CONNECTION_UNAVAILABLE: [choose('Codex 启动后未建立用量连接', 'Codex did not connect after launch'), retry]
+      CODEX_CONNECTION_UNAVAILABLE: [choose('Codex 启动后未建立用量连接', 'Codex did not connect after launch'), process.platform === 'darwin' ? choose('请在 ChatGPT 左上角切到 Codex。仍未连接时，请正常退出 ChatGPT，再从助手设置启动。', 'Switch to Codex in the top-left ChatGPT menu. If still disconnected, quit ChatGPT and launch it from Quota settings.') : retry],
+      DESKTOP_APP_UNSUPPORTED: [choose('所选应用不包含 Codex', 'The selected app does not include Codex'), selectMacApp],
+      DESKTOP_LAUNCH_FAILED: [choose('系统未能打开 Codex 客户端', 'The system could not open Codex'), process.platform === 'darwin' ? choose('请先从 Finder 正常打开所选应用，确认能进入 Codex，再退出后从助手启动。', 'Open the selected app from Finder and check that Codex opens. Quit it and launch again from Quota.') : retry],
+      DESKTOP_OTHER_APP_RUNNING: [choose('另一个 Codex 客户端正在运行', 'Another Codex app is running'), retry],
+      DESKTOP_STATUS_FAILED: [choose('无法确认 Codex 的运行状态', 'Could not check whether Codex is running'), retry]
     };
+    if (process.platform === 'darwin') messages.DESKTOP_APP_NOT_FOUND = [choose('找不到支持 Codex 的 ChatGPT 应用', 'Could not find the ChatGPT app with Codex'), selectMacApp];
     const [message, detail] = messages[error.message] || [
       choose('未能启动 Codex', 'Could not launch Codex'),
       choose('请确认 Codex 已安装；可以设置 CODEX_QUOTA_APP_PATH 后重新启动额度助手。', 'Check that Codex is installed. You can set CODEX_QUOTA_APP_PATH and restart the helper.')
@@ -347,20 +355,23 @@ async function savePreviews() {
 }
 
 async function refresh() {
-  if (refreshing || quitting || smoke) return;
+  if (quitting || smoke) return;
+  if (refreshing) { refreshPending = true; return; }
   clearTimeout(timer); refreshing = true; state.loading = true; publish();
   try {
     if (!client) client = new CodexClient(discoverCodex(settings.codexPath));
     state.quota = normalizeQuota(await client.readQuota());
     state.error = null; failures = 0;
   } catch (error) {
-    const known = ['CODEX_NOT_FOUND', 'CODEX_PATH_INVALID', 'CHATGPT_LOGIN_REQUIRED', 'QUOTA_UNAVAILABLE', 'CODEX_TIMEOUT'];
+    const known = ['CODEX_NOT_FOUND', 'CODEX_PATH_INVALID', 'CODEX_MAC_APP_UNSUPPORTED', 'CHATGPT_LOGIN_REQUIRED', 'QUOTA_UNAVAILABLE', 'CODEX_TIMEOUT'];
     state.error = known.includes(error.message) ? error.message : 'CONNECTION_FAILED';
     failures++;
     client?.close(); client = null;
   } finally {
     refreshing = false; state.loading = false; publish();
-    if (!quitting) timer = setTimeout(refresh, Math.min(300, settings.interval * Math.max(1, failures)) * 1000);
+    const wait = refreshPending ? 0 : Math.min(300, settings.interval * Math.max(1, failures)) * 1000;
+    refreshPending = false;
+    if (!quitting) timer = setTimeout(refresh, wait);
   }
 }
 
@@ -376,12 +387,27 @@ function openContextMenu() {
   Menu.buildFromTemplate(menuItems()).popup({ callback: () => { systemMenuOpen = false; } });
 }
 async function chooseExecutable() {
+  const mac = process.platform === 'darwin';
   const result = await dialog.showOpenDialog(settingsWindow || win, {
-    title: choose('选择 Codex 可执行文件', 'Select the Codex executable'), properties: ['openFile'],
-    ...(process.platform === 'win32' ? { filters: [{ name: 'Codex', extensions: ['exe'] }] } : {})
+    title: mac ? choose('选择 ChatGPT.app 或 Codex 命令行程序', 'Select ChatGPT.app or the Codex CLI') : choose('选择 Codex 可执行文件', 'Select the Codex executable'),
+    properties: ['openFile'],
+    ...(mac ? { defaultPath: '/Applications' } : { filters: [{ name: 'Codex', extensions: ['exe'] }] })
   });
   if (result.canceled || !result.filePaths[0]) return;
-  settings.codexPath = result.filePaths[0];
+  const selected = result.filePaths[0];
+  const bundle = mac ? macAppBundle(selected) : null;
+  try {
+    if (bundle) discoverDesktopApp(bundle);
+    discoverCodex(selected);
+  } catch {
+    await dialog.showMessageBox(settingsWindow || win, {
+      type: 'warning', title: 'Codex Quota', message: choose('所选程序无法用于 Codex', 'The selected program cannot be used for Codex'),
+      detail: mac ? choose('请选择支持 Codex 的 ChatGPT.app，或单独安装的 Codex 命令行程序。', 'Choose the ChatGPT.app that includes Codex, or a standalone Codex CLI executable.') : choose('请选择 Codex 可执行文件。', 'Choose the Codex executable.')
+    });
+    return;
+  }
+  settings.codexPath = bundle || selected;
+  if (bundle) settings.desktopAppPath = bundle;
   client?.close(); client = null;
   persist(); publish(); refresh();
 }

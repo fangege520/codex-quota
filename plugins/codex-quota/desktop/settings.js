@@ -65,7 +65,9 @@ function paint(state) {
   $('login-note').textContent = state.canLaunchAtLogin ? '' : t('登录时启动适用于正式安装版。', 'Launch at login is available in the packaged app.');
   $('refresh').disabled = !state.canRefresh;
   $('toggle-floating').textContent = state.floatingVisible ? t('隐藏悬浮框', 'Hide floating panel') : t('显示悬浮框', 'Show floating panel');
-  $('executable-note').textContent = state.codexExecutable || t('Codex 程序由用量助手自动查找。', 'Quota finds the Codex executable automatically.');
+  $('executable-note').textContent = state.codexExecutable || (state.mac
+    ? t('自动查找支持 Codex 的 ChatGPT 应用，也可以手动选择。', 'Quota finds the ChatGPT app that includes Codex, or you can choose it manually.')
+    : t('Codex 程序由用量助手自动查找。', 'Quota finds the Codex executable automatically.'));
   $('shortcut-note').textContent = state.shortcutAvailable ? t('显示或隐藏悬浮框 · ', 'Toggle floating panel · ') + (state.mac ? '⌘' : 'Ctrl') + '+Shift+Q' : '';
   if (languageChanged) buildAppearance();
   paintAppearance();

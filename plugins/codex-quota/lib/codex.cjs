@@ -7,15 +7,17 @@ const { spawn } = require('node:child_process');
 const { createInterface } = require('node:readline');
 const { THREAD_ID } = require('./usage.cjs');
 const { version } = require('../package.json');
-
-function executable(file) {
-  try { fs.accessSync(file, process.platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK); return fs.statSync(file).isFile(); }
-  catch { return false; }
-}
+const { executable, macAppBundle, bundledCodex } = require('./mac-app.cjs');
 
 function discoverCodex(override, env = process.env) {
   const requested = override || env.CODEX_QUOTA_CODEX_BIN;
   if (requested) {
+    const bundle = process.platform === 'darwin' ? macAppBundle(requested) : null;
+    if (bundle) {
+      const bundled = bundledCodex(bundle);
+      if (!bundled) throw new Error('CODEX_MAC_APP_UNSUPPORTED');
+      return bundled;
+    }
     if (!executable(requested)) throw new Error('CODEX_PATH_INVALID');
     return requested;
   }
@@ -35,7 +37,7 @@ function discoverCodex(override, env = process.env) {
       candidates.push(path.join(root, '@openai', `codex-win32-${arch === 'x86_64' ? 'x64' : 'arm64'}`, 'vendor', `${arch}-pc-windows-msvc`, 'codex', 'codex.exe'));
     }
   } else {
-    for (const app of ['Codex', 'ChatGPT']) for (const root of ['/Applications', path.join(os.homedir(), 'Applications')]) {
+    for (const app of ['ChatGPT', 'Codex']) for (const root of ['/Applications', path.join(os.homedir(), 'Applications')]) {
       candidates.push(path.join(root, `${app}.app`, 'Contents', 'Resources', 'codex'));
       candidates.push(path.join(root, `${app}.app`, 'Contents', 'Resources', 'bin', 'codex'));
     }

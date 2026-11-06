@@ -57,6 +57,7 @@ function paint(state) {
   const errors = {
     CODEX_NOT_FOUND: t('未找到 Codex，可在设置中选择程序', 'Codex not found; choose it in settings'),
     CODEX_PATH_INVALID: t('Codex 路径失效，请重新选择', 'Codex path invalid; choose it again'),
+    CODEX_MAC_APP_UNSUPPORTED: t('请重新选择支持 Codex 的 ChatGPT 应用', 'Choose the ChatGPT app that includes Codex'),
     CHATGPT_LOGIN_REQUIRED: t('请先用 ChatGPT 账户登录 Codex CLI', 'Sign into Codex CLI with ChatGPT first'),
     QUOTA_UNAVAILABLE: t('账户未返回可用额度', 'Account quota unavailable'),
     CODEX_TIMEOUT: t('刷新超时，将自动重试', 'Refresh timed out; retrying'),

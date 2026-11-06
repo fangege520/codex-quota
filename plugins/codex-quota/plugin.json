@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "codex-quota",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "repository": "https://github.com/fangege520/codex-quota",
   "description": "Keep Codex quota visible in a draggable desktop overlay on macOS and Windows.",
   "license": "MIT",
