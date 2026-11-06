@@ -68,37 +68,49 @@ jobs:
       - run: npm run test:composer
       - run: npm ci
         working-directory: .
-      - name: Build and sign the macOS downloads
+      - name: Build and sign the macOS disk image
         working-directory: .
         env:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           : "${CSC_LINK:?Configure MAC_CSC_LINK}"
           : "${CSC_KEY_PASSWORD:?Configure MAC_CSC_KEY_PASSWORD}"
-          : "${APPLE_ID:?Configure APPLE_ID}"
-          : "${APPLE_APP_SPECIFIC_PASSWORD:?Configure APPLE_APP_SPECIFIC_PASSWORD}"
-          : "${APPLE_TEAM_ID:?Configure APPLE_TEAM_ID}"
-          npm run dist -- --mac --${{ matrix.arch }} -c.mac.forceCodeSigning=true -c.mac.notarize=true -c.dmg.sign=true
-      - name: Notarize and staple the disk image
+          npm run dist -- --mac dmg --${{ matrix.arch }} -c.mac.forceCodeSigning=true -c.mac.notarize=false -c.dmg.sign=true
+      - name: Submit the disk image to Apple
+        id: notary-submit
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          : "${APPLE_ID:?Configure APPLE_ID}"
+          : "${APPLE_APP_SPECIFIC_PASSWORD:?Configure APPLE_APP_SPECIFIC_PASSWORD}"
+          : "${APPLE_TEAM_ID:?Configure APPLE_TEAM_ID}"
           image="dist/Codex-Quota-$(node -p 'require("./package.json").version')-mac-${{ matrix.arch }}.dmg"
           codesign --verify --verbose=2 "$image"
           result=$(xcrun notarytool submit "$image" --apple-id "$APPLE_ID" \
-            --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait --output-format json)
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" --output-format json)
+          submission_id=$(node -p 'JSON.parse(require("node:fs").readFileSync(0, "utf8")).id' <<< "$result")
+          [[ "$submission_id" =~ ^[[:xdigit:]]{8}(-[[:xdigit:]]{4}){3}-[[:xdigit:]]{12}$ ]]
+          echo "Apple notarization submission ID: $submission_id"
+          echo "submission-id=$submission_id" >> "$GITHUB_OUTPUT"
+      - name: Wait for Apple notarization and staple the disk image
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          SUBMISSION_ID: ${{ steps.notary-submit.outputs.submission-id }}
+        run: |
+          image="dist/Codex-Quota-$(node -p 'require("./package.json").version')-mac-${{ matrix.arch }}.dmg"
+          result=$(xcrun notarytool wait "$SUBMISSION_ID" --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" --timeout 4h --output-format json)
           status=$(node -p 'JSON.parse(require("node:fs").readFileSync(0, "utf8")).status' <<< "$result")
           echo "Apple disk image notarization status: $status"
           test "$status" = Accepted
           xcrun stapler staple "$image"
           xcrun stapler validate "$image"
-      - name: Verify the app copied from the macOS installer
+      - name: Verify the app copied from the macOS installer and create the ZIP
         run: |
           image="dist/Codex-Quota-$(node -p 'require("./package.json").version')-mac-${{ matrix.arch }}.dmg"
           hdiutil verify "$image"
@@ -113,9 +125,11 @@ jobs:
           test -n "$icon"
           test -s "$bundle/Contents/Resources/${icon%.icns}.icns"
           codesign --verify --deep --strict --verbose=2 "$bundle"
+          xcrun stapler staple "$bundle"
           xcrun stapler validate "$bundle"
           spctl --assess --type execute --verbose=2 "$bundle"
           CODEX_QUOTA_SMOKE_EXECUTABLE="$bundle/Contents/MacOS/Codex Quota" npm run smoke
+          ditto -c -k --keepParent "$bundle" "${image%.dmg}.zip"
       - uses: actions/upload-artifact@v6
         with:
           name: Codex-Quota-mac-${{ matrix.arch }}
