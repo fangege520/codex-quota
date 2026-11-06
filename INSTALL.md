@@ -2,9 +2,9 @@
 
 ## 成品安装包
 
-- [Windows x64 · 下载 `.exe`](https://github.com/fangege520/codex-quota/releases/download/v0.4.3/Codex-Quota-0.4.3-win-x64.exe)
-- [Mac Apple 芯片 · 下载 `.dmg`](https://github.com/fangege520/codex-quota/releases/download/v0.4.3/Codex-Quota-0.4.3-mac-arm64.dmg)
-- [Mac Intel · 下载 `.dmg`](https://github.com/fangege520/codex-quota/releases/download/v0.4.3/Codex-Quota-0.4.3-mac-x64.dmg)
+- [Windows x64 · 下载 `.exe`](https://github.com/fangege520/codex-quota/releases/download/v0.4.4/Codex-Quota-0.4.4-win-x64.exe)
+- [Mac Apple 芯片 · 下载 `.dmg`](https://github.com/fangege520/codex-quota/releases/download/v0.4.4/Codex-Quota-0.4.4-mac-arm64.dmg)
+- [Mac Intel · 下载 `.dmg`](https://github.com/fangege520/codex-quota/releases/download/v0.4.4/Codex-Quota-0.4.4-mac-x64.dmg)
 
 安装前先退出正在运行的用量助手。Windows 运行下载的 `.exe`。Mac 打开 `.dmg` 后，将 **Codex Quota.app** 拖入「应用程序」，然后从 Finder 打开。安装后用已登录 ChatGPT 的 Codex 读取额度。
 
@@ -29,4 +29,4 @@
 
 要显示 Codex 左栏，等当前任务完成并正常退出 Codex，再从用量助手设置点击 **启动 Codex（用量助手）**。可在设置中开启编辑框额度或桌面悬浮框。
 
-Mac 上若提示找不到应用，先从 Finder 打开 ChatGPT，确认左上角可以切换到 **Codex**。然后在用量助手设置里点击 **选择 Codex 程序**，选中这个 `ChatGPT.app`。用量助手会自动识别内置程序。
+Mac 上用量助手会自动查找支持 Codex 的 ChatGPT。若仍提示找不到应用，先从 Finder 打开 ChatGPT，确认左上角可以切换到 **Codex**，再在用量助手设置里点击 **选择 Codex 程序**，手动选中这个 `ChatGPT.app`。

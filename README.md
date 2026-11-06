@@ -25,9 +25,9 @@
 
 ### 安装包下载
 
-- [Windows x64 · 下载 `.exe`](https://github.com/fangege520/codex-quota/releases/download/v0.4.3/Codex-Quota-0.4.3-win-x64.exe)
-- [Mac Apple 芯片 · 下载 `.dmg`](https://github.com/fangege520/codex-quota/releases/download/v0.4.3/Codex-Quota-0.4.3-mac-arm64.dmg)
-- [Mac Intel · 下载 `.dmg`](https://github.com/fangege520/codex-quota/releases/download/v0.4.3/Codex-Quota-0.4.3-mac-x64.dmg)
+- [Windows x64 · 下载 `.exe`](https://github.com/fangege520/codex-quota/releases/download/v0.4.4/Codex-Quota-0.4.4-win-x64.exe)
+- [Mac Apple 芯片 · 下载 `.dmg`](https://github.com/fangege520/codex-quota/releases/download/v0.4.4/Codex-Quota-0.4.4-mac-arm64.dmg)
+- [Mac Intel · 下载 `.dmg`](https://github.com/fangege520/codex-quota/releases/download/v0.4.4/Codex-Quota-0.4.4-mac-x64.dmg)
 
 ### 复制给 Codex 执行
 
