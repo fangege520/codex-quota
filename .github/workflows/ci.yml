@@ -1,6 +1,7 @@
 name: Check desktop plugin
 on:
   push:
+    branches: ['**']
   pull_request:
   workflow_dispatch:
 permissions:
@@ -16,8 +17,8 @@ jobs:
       run:
         working-directory: plugins/codex-quota
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: npm
@@ -26,7 +27,7 @@ jobs:
       - run: npm test
       - run: npm run smoke
       - run: npm run test:composer
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: desktop-check-${{ matrix.os }}
