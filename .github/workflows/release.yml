@@ -43,11 +43,47 @@ jobs:
         working-directory: .
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      - name: Build and notarize the macOS release
-        if: matrix.platform == 'mac'
-        id: mac-package
-        working-directory: .
+      - uses: actions/upload-artifact@v4
+        if: matrix.platform == 'win'
+        with:
+          name: Codex-Quota-win-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            plugins/codex-quota/dist/*.zip
+            plugins/codex-quota/dist/*.exe
+  sign-mac:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    environment: mac-signing
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            arch: arm64
+          - os: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: plugins/codex-quota
         shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            plugins/codex-quota/package-lock.json
+      - run: npm ci
+      - run: npm ci
+        working-directory: .
+      - name: Build and sign the macOS downloads
+        working-directory: .
         env:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
@@ -55,21 +91,28 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          if [[ -z "$CSC_LINK$CSC_KEY_PASSWORD$APPLE_ID$APPLE_APP_SPECIFIC_PASSWORD$APPLE_TEAM_ID" ]]; then
-            echo '::notice::Apple signing credentials are unavailable. Only the macOS source installation was tested.'
-            exit 0
-          fi
           : "${CSC_LINK:?Configure MAC_CSC_LINK}"
           : "${CSC_KEY_PASSWORD:?Configure MAC_CSC_KEY_PASSWORD}"
           : "${APPLE_ID:?Configure APPLE_ID}"
           : "${APPLE_APP_SPECIFIC_PASSWORD:?Configure APPLE_APP_SPECIFIC_PASSWORD}"
           : "${APPLE_TEAM_ID:?Configure APPLE_TEAM_ID}"
-          npm ci
-          npm run dist -- --mac --${{ matrix.arch }} -c.mac.forceCodeSigning=true -c.mac.notarize=true
-          echo 'created=true' >> "$GITHUB_OUTPUT"
+          npm run dist -- --mac --${{ matrix.arch }} -c.mac.forceCodeSigning=true -c.mac.notarize=true -c.dmg.sign=true
+      - name: Notarize and staple the disk image
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          image="dist/Codex-Quota-$(node -p 'require("./package.json").version')-mac-${{ matrix.arch }}.dmg"
+          codesign --verify --verbose=2 "$image"
+          result=$(xcrun notarytool submit "$image" --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait --output-format json)
+          status=$(node -p 'JSON.parse(require("node:fs").readFileSync(0, "utf8")).status' <<< "$result")
+          echo "Apple disk image notarization status: $status"
+          test "$status" = Accepted
+          xcrun stapler staple "$image"
+          xcrun stapler validate "$image"
       - name: Verify the app copied from the macOS installer
-        if: matrix.platform == 'mac' && steps.mac-package.outputs.created == 'true'
-        shell: bash
         run: |
           image="dist/Codex-Quota-$(node -p 'require("./package.json").version')-mac-${{ matrix.arch }}.dmg"
           hdiutil verify "$image"
@@ -88,17 +131,15 @@ jobs:
           spctl --assess --type execute --verbose=2 "$bundle"
           CODEX_QUOTA_SMOKE_EXECUTABLE="$bundle/Contents/MacOS/Codex Quota" npm run smoke
       - uses: actions/upload-artifact@v4
-        if: matrix.platform == 'win' || steps.mac-package.outputs.created == 'true'
         with:
-          name: Codex-Quota-${{ matrix.platform }}-${{ matrix.arch }}
+          name: Codex-Quota-mac-${{ matrix.arch }}
           if-no-files-found: error
           path: |
             plugins/codex-quota/dist/*.zip
             plugins/codex-quota/dist/*.dmg
-            plugins/codex-quota/dist/*.exe
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, sign-mac]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -113,7 +154,7 @@ jobs:
           draft: true
           body: |
             - Windows x64：下载 `win-x64.exe`。
-            - macOS：若附件中有已验证的 `.dmg`，请按 Apple 芯片或 Intel 下载。否则按仓库的 `INSTALL.md` 进行源码安装。
+            - macOS：请按 Apple 芯片或 Intel 下载已签名并通过 Apple 公证的 `.dmg`。
 
             安装后打开 Codex Quota，可在用量助手设置中启动并连接 Codex 左栏。
           files: downloads/*
