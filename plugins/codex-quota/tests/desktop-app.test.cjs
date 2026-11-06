@@ -37,31 +37,41 @@ test('Windows Store launcher uses package activation and reports activation fail
   }
 });
 
-test('macOS AppKit can report desktop bundle status', { skip: process.platform !== 'darwin' }, () => {
-  const script = path.join(__dirname, '..', 'lib', 'stop-mac-app.js');
-  const result = childProcess.execFileSync('/usr/bin/osascript', ['-l', 'JavaScript', script, '/Applications/Codex Quota Test.app', 'status'], { encoding: 'utf8', timeout: 5000 });
+test('macOS AppKit can discover apps and report desktop bundle status', { skip: process.platform !== 'darwin' }, () => {
+  const script = path.join(__dirname, '..', 'lib', 'mac-desktop-app.js');
+  const run = args => childProcess.execFileSync('/usr/bin/osascript', ['-l', 'JavaScript', script, ...args], { encoding: 'utf8', timeout: 5000 });
+  const result = run(['status', '/Applications/Codex Quota Test.app']);
   assert.match(result.trim(), /^(?:stopped|other)$/);
+  const { running, installed } = JSON.parse(run(['discover']));
+  assert(Array.isArray(running));
+  assert(Array.isArray(installed));
 });
 
 test('macOS uses the selected ChatGPT bundle for both quota and desktop launch', async () => {
   const platform = Object.getOwnPropertyDescriptor(process, 'platform');
   Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
-  const app = path.resolve('Apps With Spaces', 'ChatGPT.app');
+  const app = path.resolve('Apps With Spaces', 'ChatGPT Renamed.app');
   const classic = path.resolve('Apps With Spaces', 'ChatGPT Classic.app');
   const guiExecutable = path.join(app, 'Contents', 'MacOS', 'ChatGPT');
   const resources = path.join(app, 'Contents', 'Resources');
   const codex = path.join(resources, 'codex');
   const archive = path.join(resources, 'app.asar');
+  const standard = path.resolve('/Applications', 'ChatGPT.app');
+  const standardResources = path.join(standard, 'Contents', 'Resources');
+  const standardCodex = path.join(standardResources, 'codex');
   const exists = fs.existsSync;
   const access = fs.accessSync;
   const stat = fs.statSync;
   const calls = [];
-  let status = 'stopped', openFails = false;
-  mock.method(fs, 'existsSync', file => [app, classic, guiExecutable, archive].includes(file) || exists(file));
-  mock.method(fs, 'accessSync', (file, mode) => { if (file !== codex) access(file, mode); });
-  mock.method(fs, 'statSync', file => file === codex ? { isFile: () => true } : stat(file));
+  let status = 'stopped', openFails = false, running = [], standardInstalled = false, discoveryFails = false;
+  const isCli = file => file === codex || (standardInstalled && file === standardCodex);
+  mock.method(fs, 'existsSync', file => [app, classic, guiExecutable, archive].includes(file) ||
+    (standardInstalled && file === path.join(standardResources, 'app.asar')) || (!String(file).endsWith('app.asar') && exists(file)));
+  mock.method(fs, 'accessSync', (file, mode) => { if (!isCli(file)) access(file, mode); });
+  mock.method(fs, 'statSync', file => isCli(file) ? { isFile: () => true } : stat(file));
   mock.method(childProcess, 'spawnSync', (file, args) => {
     calls.push({ file, args });
+    if (args.at(-1) === 'discover') return discoveryFails ? { status: 1, stdout: '' } : { status: 0, stdout: JSON.stringify({ running, installed: [classic, app] }) };
     return { status: 0, stdout: status + '\n' };
   });
   mock.method(childProcess, 'execFile', (file, args, _options, callback) => {
@@ -73,12 +83,24 @@ test('macOS uses the selected ChatGPT bundle for both quota and desktop launch',
   try {
     const { discoverDesktopApp, launchDesktop } = require(modulePath);
     const { discoverCodex } = require('../lib/codex.cjs');
+    const { macOverrides } = require('../lib/mac-app.cjs');
     assert.equal(discoverCodex(app), codex);
     assert.equal(discoverCodex(guiExecutable), codex);
     assert.equal(discoverDesktopApp(guiExecutable), app);
     assert.throws(() => discoverCodex(classic), /CODEX_MAC_APP_UNSUPPORTED/);
     assert.throws(() => discoverDesktopApp(classic), /DESKTOP_APP_UNSUPPORTED/);
-    assert.deepEqual(await launchDesktop({ executable: app }), { executable: app, port: 9339 });
+    const stale = macOverrides({ codexPath: classic, desktopAppPath: path.resolve('Missing.app') });
+    assert.deepEqual(stale, { codex: undefined, desktop: undefined });
+    assert.equal(discoverDesktopApp(stale.desktop), app);
+    assert.equal(discoverCodex(stale.codex, {}), codex);
+    assert.deepEqual(macOverrides({ codexPath: guiExecutable, desktopAppPath: classic }), { codex: app, desktop: app });
+    standardInstalled = true;
+    discoveryFails = true;
+    assert.equal(discoverDesktopApp(), standard);
+    assert.equal(discoverCodex(undefined, {}), standardCodex);
+    discoveryFails = false;
+    running = [app];
+    assert.deepEqual(await launchDesktop({ executable: stale.desktop }), { executable: app, port: 9339 });
     assert.deepEqual(calls.find(call => call.file === '/usr/bin/open')?.args,
       ['-a', app, '--args', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=9339']);
     openFails = true;

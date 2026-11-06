@@ -8,7 +8,7 @@ const { CodexClient, discoverCodex } = require('../lib/codex.cjs');
 const { normalizeQuota, clampBounds } = require('../lib/quota.cjs');
 const { ComposerBridge, DEFAULT_PORT, validPort } = require('../lib/composer.cjs');
 const { discoverDesktopApp, launchDesktop, stopDesktop } = require('../lib/desktop-app.cjs');
-const { macAppBundle, isMacCodexApp } = require('../lib/mac-app.cjs');
+const { macAppBundle, macOverrides } = require('../lib/mac-app.cjs');
 const { findTaskbarCardBounds, popoverBounds, TaskbarWatcher } = require('../lib/system-bar.cjs');
 const { UsageIndex } = require('../lib/usage.cjs');
 const quotaDisplay = require('./display.js');
@@ -66,12 +66,13 @@ function persist() {
 }
 function snapshot() { const result = JSON.parse(JSON.stringify(state)); if (popover) result.settings.collapsed = false; return result; }
 function settingsSnapshot() {
+  const codexPath = process.platform === 'darwin' ? macOverrides(settings).codex : settings.codexPath;
   return { language: settings.language, quota: state.quota, composer: settings.composerEnabled, bar: settings.systemBarEnabled, floating: settings.floatingEnabled, theme: settings.theme,
     display: settings.display, barReason: state.systemBarReason, connection: composerStatusText(), mac: process.platform === 'darwin',
     compact: settings.collapsed, topmost: settings.topmost, opacity: settings.opacity, interval: settings.interval,
     floatingVisible: !!win?.isVisible() && !popover, canRefresh: !refreshing && !smoke,
     canLaunchAtLogin: app.isPackaged, launchAtLogin: app.isPackaged && app.getLoginItemSettings().openAtLogin,
-    shortcutAvailable: !!state.shortcutAvailable, codexExecutable: settings.codexPath ? path.basename(settings.codexPath) : '' };
+    shortcutAvailable: !!state.shortcutAvailable, codexExecutable: codexPath ? path.basename(codexPath) : '' };
 }
 function publish(preview = false) {
   state.systemDark = settings.theme === 'dark' || settings.theme === 'system' && (nativeTheme.shouldUseDarkColorsForSystemIntegratedUI ?? nativeTheme.shouldUseDarkColors);
@@ -130,9 +131,9 @@ async function launchCodex() {
     if (await bridge?.focus()) return;
     // Re-resolve Store installs after every app update. A saved path is only
     // used for a still-existing custom install.
-    const custom = settings.desktopAppPath && !/[\\/]WindowsApps[\\/]/i.test(settings.desktopAppPath) && fs.existsSync(settings.desktopAppPath) ? settings.desktopAppPath : undefined;
-    const previousMacBundle = process.platform === 'darwin' ? macAppBundle(settings.codexPath) : null;
-    const options = { executable: process.env.CODEX_QUOTA_APP_PATH || custom || (isMacCodexApp(previousMacBundle) ? previousMacBundle : undefined), port: settings.composerPort };
+    const custom = process.platform === 'darwin' ? macOverrides(settings).desktop :
+      settings.desktopAppPath && !/[\\/]WindowsApps[\\/]/i.test(settings.desktopAppPath) && fs.existsSync(settings.desktopAppPath) ? settings.desktopAppPath : undefined;
+    const options = { executable: process.env.CODEX_QUOTA_APP_PATH || custom, port: settings.composerPort };
     try {
       await launchDesktop(options);
     } catch (error) {
@@ -359,7 +360,10 @@ async function refresh() {
   if (refreshing) { refreshPending = true; return; }
   clearTimeout(timer); refreshing = true; state.loading = true; publish();
   try {
-    if (!client) client = new CodexClient(discoverCodex(settings.codexPath));
+    if (!client) {
+      const codexPath = process.platform === 'darwin' ? macOverrides(settings).codex : settings.codexPath;
+      client = new CodexClient(discoverCodex(codexPath));
+    }
     state.quota = normalizeQuota(await client.readQuota());
     state.error = null; failures = 0;
   } catch (error) {

@@ -6,7 +6,7 @@ const { execFile, spawn, spawnSync } = require('node:child_process');
 const { setTimeout: delay } = require('node:timers/promises');
 const { promisify } = require('node:util');
 const { DEFAULT_PORT, validPort } = require('./composer.cjs');
-const { macAppBundle, isMacCodexApp } = require('./mac-app.cjs');
+const { macAppBundle, isMacCodexApp, findMacCodexApp, macDesktopScript } = require('./mac-app.cjs');
 const script = name => path.join(__dirname, name).replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2');
 
 function windowsApps() {
@@ -38,10 +38,8 @@ function discoverDesktopApp(override) {
     const found = windowsApps().find(file => typeof file === 'string' && fs.existsSync(file));
     if (found) return found;
   } else if (process.platform === 'darwin') {
-    for (const name of ['ChatGPT', 'Codex']) for (const base of ['/Applications', path.join(os.homedir(), 'Applications')]) {
-      const bundle = path.join(base, `${name}.app`);
-      if (isMacCodexApp(bundle)) return bundle;
-    }
+    const found = findMacCodexApp();
+    if (found) return found;
   }
   throw new Error('DESKTOP_APP_NOT_FOUND');
 }
@@ -59,7 +57,7 @@ function isDesktopRunning(executable) {
     return result.status !== 0 || result.stdout.includes('running');
   }
   if (process.platform === 'darwin') {
-    const result = spawnSync('/usr/bin/osascript', ['-l', 'JavaScript', script('stop-mac-app.js'), executable, 'status'], { encoding: 'utf8', timeout: 5000 });
+    const result = spawnSync('/usr/bin/osascript', ['-l', 'JavaScript', macDesktopScript, 'status', executable], { encoding: 'utf8', timeout: 5000 });
     const status = result.stdout?.trim();
     if (result.status !== 0 || !['running', 'stopped', 'other'].includes(status)) throw new Error('DESKTOP_STATUS_FAILED');
     if (status === 'other') throw new Error('DESKTOP_OTHER_APP_RUNNING');
@@ -74,7 +72,7 @@ async function stopDesktop(executable) {
       await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
         '-File', script('stop-windows-app.ps1'), '-Executable', executable], { windowsHide: true });
     } else if (process.platform === 'darwin') {
-      await run('/usr/bin/osascript', ['-l', 'JavaScript', script('stop-mac-app.js'), executable, 'stop'], { timeout: 10000 });
+      await run('/usr/bin/osascript', ['-l', 'JavaScript', macDesktopScript, 'stop', executable], { timeout: 10000 });
     } else {
       throw new Error('UNSUPPORTED_PLATFORM');
     }

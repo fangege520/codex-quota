@@ -7,7 +7,7 @@ const { spawn } = require('node:child_process');
 const { createInterface } = require('node:readline');
 const { THREAD_ID } = require('./usage.cjs');
 const { version } = require('../package.json');
-const { executable, macAppBundle, bundledCodex } = require('./mac-app.cjs');
+const { executable, macAppBundle, bundledCodex, findMacCodexApp } = require('./mac-app.cjs');
 
 function discoverCodex(override, env = process.env) {
   const requested = override || env.CODEX_QUOTA_CODEX_BIN;
@@ -37,9 +37,12 @@ function discoverCodex(override, env = process.env) {
       candidates.push(path.join(root, '@openai', `codex-win32-${arch === 'x86_64' ? 'x64' : 'arm64'}`, 'vendor', `${arch}-pc-windows-msvc`, 'codex', 'codex.exe'));
     }
   } else {
-    for (const app of ['ChatGPT', 'Codex']) for (const root of ['/Applications', path.join(os.homedir(), 'Applications')]) {
-      candidates.push(path.join(root, `${app}.app`, 'Contents', 'Resources', 'codex'));
-      candidates.push(path.join(root, `${app}.app`, 'Contents', 'Resources', 'bin', 'codex'));
+    if (process.platform === 'darwin') {
+      const fromPath = candidates.find(executable);
+      if (fromPath) return fromPath;
+      const bundle = findMacCodexApp();
+      const bundled = bundle && bundledCodex(bundle);
+      if (bundled) return bundled;
     }
     candidates.push('/opt/homebrew/bin/codex', '/usr/local/bin/codex', path.join(os.homedir(), '.local', 'bin', 'codex'));
   }
