@@ -14,21 +14,27 @@
 
 | 平台 | 启动入口 | 查看额度 |
 | --- | --- | --- |
-| Windows | 桌面或开始菜单的 **Codex（用量助手）** | 任务栏额度或托盘图标 |
-| macOS | Finder 中的 `~/Applications/Codex Quota.app` | 顶部菜单栏 |
+| Windows | 开始菜单的 **Codex Quota**。源码安装使用 **Codex（用量助手）** | 任务栏额度或托盘图标 |
+| macOS | Finder「应用程序」中的 **Codex Quota.app**。源码安装位于 `~/Applications` | 顶部菜单栏 |
 
-要显示 Codex 左栏，请等当前任务完成，正常退出 Codex，再从对应入口打开。点击左栏齿轮或右键点击系统栏组件可打开设置。按 `Ctrl+Shift+Q`（Windows）或 `⌘+Shift+Q`（macOS）可切换桌面悬浮框。
+要显示 Codex 左栏，请等当前任务完成，正常退出 Codex，再从助手设置点击 **启动 Codex（用量助手）**。点击左栏齿轮或右键点击系统栏组件可打开设置。按 `Ctrl+Shift+Q`（Windows）或 `⌘+Shift+Q`（macOS）可切换桌面悬浮框。
 
 ![桌面悬浮框（演示数据）](docs/compact.png)
 
 ## 安装
 
-优先从 [GitHub Releases](https://github.com/fangege520/codex-quota/releases) 下载成品。Windows x64 选 `.exe`，Mac 按 Apple 芯片或 Intel 选对应的 `.dmg`。安装完成后打开 **Codex Quota**，在助手设置中选择 **启动 Codex（用量助手）** 即可连接左栏。
+### 安装包下载
 
-需要导入 Codex 插件时，在 Windows 或 macOS 的 Codex 桌面端发送这一句：
+- [Windows x64 · 下载 `.exe`](https://github.com/fangege520/codex-quota/releases/download/v0.4.2/Codex-Quota-0.4.2-win-x64.exe)
+- [Mac Apple 芯片 · 下载 `.dmg`](https://github.com/fangege520/codex-quota/releases/download/v0.4.2/Codex-Quota-0.4.2-mac-arm64.dmg)
+- [Mac Intel · 下载 `.dmg`](https://github.com/fangege520/codex-quota/releases/download/v0.4.2/Codex-Quota-0.4.2-mac-x64.dmg)
+
+### 复制给 Codex 执行
+
+在 Windows 或 macOS 的 Codex 桌面端粘贴这段文字。
 
 ```text
-请下载 https://github.com/fangege520/codex-quota，读取 INSTALL.md，按当前系统安装并启动 Codex 用量助手，创建启动入口并验证额度显示。
+请读取 https://github.com/fangege520/codex-quota/blob/main/INSTALL.md，识别本机的系统和处理器架构，下载对应的 Codex Quota 成品安装包，安装并打开用量助手，验证 Windows 任务栏或 macOS 菜单栏能否显示额度。遇到系统确认、授权或登录时，请让我操作。
 ```
 
-手动安装请见 [安装说明](INSTALL.md)。首次安装需要联网，ChatGPT 登录和系统授权由本人操作。
+手动安装和源码导入见 [安装说明](INSTALL.md)。
