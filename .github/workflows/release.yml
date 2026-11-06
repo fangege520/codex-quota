@@ -109,9 +109,10 @@ jobs:
           echo "Apple disk image notarization status: $status"
           test "$status" = Accepted
           bash "$GITHUB_WORKSPACE/.github/scripts/staple-macos.sh" "$image"
-      - name: Verify the app copied from the macOS installer and create the ZIP
+      - name: Verify the macOS disk image and test the installed app
         run: |
           image="dist/Codex-Quota-$(node -p 'require("./package.json").version')-mac-${{ matrix.arch }}.dmg"
+          spctl --assess --type open --context context:primary-signature --verbose=2 "$image"
           hdiutil verify "$image"
           scratch=$(mktemp -d "$RUNNER_TEMP/quota-release.XXXXXX")
           mount="$scratch/volume"
@@ -124,10 +125,17 @@ jobs:
           test -n "$icon"
           test -s "$bundle/Contents/Resources/${icon%.icns}.icns"
           codesign --verify --deep --strict --verbose=2 "$bundle"
-          bash "$GITHUB_WORKSPACE/.github/scripts/staple-macos.sh" "$bundle"
-          spctl --assess --type execute --verbose=2 "$bundle"
           CODEX_QUOTA_SMOKE_EXECUTABLE="$bundle/Contents/MacOS/Codex Quota" npm run smoke
-          ditto -c -k --keepParent "$bundle" "${image%.dmg}.zip"
+
+          archive="$scratch/Codex-Quota.zip"
+          if bash "$GITHUB_WORKSPACE/.github/scripts/staple-macos.sh" "$bundle" \
+            && spctl --assess --type execute --verbose=2 "$bundle" \
+            && ditto -c -k --keepParent "$bundle" "$archive" \
+            && mv "$archive" "${image%.dmg}.zip"; then
+            echo 'Verified the optional macOS ZIP.'
+          else
+            echo '::warning::The optional macOS ZIP could not be verified. The verified DMG will still be uploaded.'
+          fi
       - uses: actions/upload-artifact@v6
         with:
           name: Codex-Quota-mac-${{ matrix.arch }}
