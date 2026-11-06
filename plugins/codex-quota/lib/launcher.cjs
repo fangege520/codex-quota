@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { version } = require('../package.json');
 
 function run(file, args) {
   const result = spawnSync(file, args, { encoding: 'utf8', windowsHide: true, timeout: 15000 });
@@ -53,11 +54,16 @@ function configureMacLauncher(runtime) {
 
   const electronApp = path.resolve(runtime.electron, '../../..');
   const launcher = path.join(contents, 'MacOS', 'codex-quota');
+  const resources = path.join(contents, 'Resources');
   fs.mkdirSync(path.dirname(launcher), { recursive: true });
+  fs.mkdirSync(resources, { recursive: true });
+  fs.copyFileSync(path.join(runtime.app, 'assets', 'icon.icns'), path.join(resources, 'icon.icns'));
   fs.writeFileSync(info, plist(`  <key>CFBundleIdentifier</key>${xmlString(id)}
   <key>CFBundleName</key><string>Codex Quota</string>
   <key>CFBundleExecutable</key><string>codex-quota</string>
+  <key>CFBundleIconFile</key><string>icon.icns</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleVersion</key>${xmlString(version)}
   <key>LSUIElement</key><true/>`));
   fs.writeFileSync(launcher, `#!/bin/sh
 unset ELECTRON_RUN_AS_NODE

@@ -8,7 +8,7 @@
 - **Mac Apple 芯片**选 `mac-arm64.dmg`。
 - **Mac Intel**选 `mac-x64.dmg`。
 
-安装前先退出正在运行的用量助手。安装后打开 **Codex Quota**，用已登录 ChatGPT 的 Codex 读取额度。需要显示 Codex 左栏时，等任务结束并正常退出 Codex，再在用量助手设置里点 **启动 Codex（用量助手）**。
+安装前先退出正在运行的用量助手。Mac 打开 `.dmg` 后，将 **Codex Quota.app** 拖入「应用程序」，然后从 Finder 打开。安装后用已登录 ChatGPT 的 Codex 读取额度。需要显示 Codex 左栏时，等任务结束并正常退出 Codex，再在用量助手设置里点 **启动 Codex（用量助手）**。
 
 ## 源码安装
 

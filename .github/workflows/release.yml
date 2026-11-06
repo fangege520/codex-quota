@@ -41,6 +41,15 @@ jobs:
         working-directory: .
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Verify the macOS app icon
+        if: matrix.platform == 'mac'
+        shell: bash
+        run: |
+          bundle=$(find dist -type d -name 'Codex Quota.app' -print -quit)
+          test -n "$bundle"
+          icon=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIconFile' "$bundle/Contents/Info.plist")
+          test -n "$icon"
+          test -s "$bundle/Contents/Resources/${icon%.icns}.icns"
       - uses: actions/upload-artifact@v4
         with:
           name: Codex-Quota-${{ matrix.platform }}-${{ matrix.arch }}
